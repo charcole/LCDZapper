@@ -6,7 +6,10 @@ void setup() {
   pinMode(6, INPUT); // Sync
   pinMode(5, INPUT); // White
   pinMode(4, OUTPUT); // Photosensor
+  pinMode(3, OUTPUT); // Dimmer
   pinMode(13, OUTPUT); // LED
+  pinMode(17, INPUT_PULLUP); // Button
+  digitalWrite(3, HIGH);
 }
 
 short ProcessLine(short delayValue)
@@ -32,9 +35,13 @@ short ProcessLine(short delayValue)
       "      BRNE LOOPC\n"    // 2 cycles when true
       "      SBIC %4, %6\n"
       "      SBI %2, %3\n"
+      "      CBI %2, %7\n"
+      "      SBI %2, %7\n"
+      "      CBI %2, %7\n"
+      "      SBI %2, %7\n"
       "      SEI\n"
       : "+r" (low), "+r" (counter)
-      : "I" (_SFR_IO_ADDR(PORTD)), "I" (PORTD4), "I" (_SFR_IO_ADDR(PIND)), "I" (PIND6), "I" (PIND5)
+      : "I" (_SFR_IO_ADDR(PORTD)), "I" (PORTD4), "I" (_SFR_IO_ADDR(PIND)), "I" (PIND6), "I" (PIND5), "I" (PORTD3)
     );
   }
   else if (high==1)
@@ -59,9 +66,13 @@ short ProcessLine(short delayValue)
       "      BRNE LOOPW\n"    // 2 cycles when true
       "      SBIC %5, %7\n"
       "      SBI %3, %4\n"
+      "      CBI %3, %8\n"
+      "      SBI %3, %8\n"
+      "      CBI %3, %8\n"
+      "      SBI %3, %8\n"
       "      SEI\n"
       : "+r" (low), "+r" (twofivefive), "+r" (counter)
-      : "I" (_SFR_IO_ADDR(PORTD)), "I" (PORTD4), "I" (_SFR_IO_ADDR(PIND)), "I" (PIND6), "I" (PIND5)
+      : "I" (_SFR_IO_ADDR(PORTD)), "I" (PORTD4), "I" (_SFR_IO_ADDR(PIND)), "I" (PIND6), "I" (PIND5), "I" (PORTD3)
     );
   }
   delay(1); // Phosphor decay time
@@ -114,14 +125,39 @@ short CalculateDelay(short x)
 
 void loop()
 {
-  short x = 320, y = 10;
-  // Read inputs, update x/y
-  // update trigger button
+  static short x = 320, y = 100;
+  short dx=analogRead(2);
+  short dy=analogRead(1);
+  bool trigger=digitalRead(17);
+  if (dx>512+256)
+  {
+    x+=2;
+    if (x>610)
+      x=610;
+  }
+  else if (dx<512-256)
+  {
+    x-=2;
+    if (x<30)
+      x=30;
+  }
+  if (dy>512+256)
+  {
+    y--;
+    if (y<40)
+      y=40;
+  }
+  else if (dy<512-256)
+  {
+    y++;
+    if (y>275)
+      y=275;
+  }
   WaitForVSync();
   WaitForVSync();
   WaitForVSync();
   delayMicroseconds(20); // Make sure we ignore the first pulse (we can miss it due to interrupts)
-  digitalWrite(13,led);
+  digitalWrite(13,led || !trigger);
   short line = 0;
   while (true)
   {
