@@ -1,15 +1,26 @@
 #define MICROSECONDS_TO_CYCLES(x) (16*(x))
 
 int led=0;
+unsigned short pointerX=230;
+unsigned short pointerY=120;
+unsigned char pointerButton=0;
+unsigned char fibbles[4];
+unsigned char fibbleOdd=0;
+unsigned char fibbleMask=0;
 
 void setup() {
+  pinMode(0, INPUT); // Serial recieve
   pinMode(6, INPUT); // Sync
   pinMode(5, INPUT); // White
   pinMode(4, OUTPUT); // Photosensor
   pinMode(3, OUTPUT); // Dimmer
   pinMode(13, OUTPUT); // LED
   pinMode(17, INPUT_PULLUP); // Button
+  pinMode(18, OUTPUT); // Trigger
   digitalWrite(3, HIGH);
+  digitalWrite(18, HIGH);
+  Serial.begin(9600);
+  UCSR0B&=~((1<<7)|(1<<5)); // Clear RX complete + UDR empty interrupt
 }
 
 short ProcessLine(short delayValue)
@@ -36,8 +47,10 @@ short ProcessLine(short delayValue)
       "      SBIC %4, %6\n"
       "      SBI %2, %3\n"
       "      CBI %2, %7\n"
-      "      SBI %2, %7\n"
-      "      CBI %2, %7\n"
+      "      NOP\n"
+      "      NOP\n"
+      "      NOP\n"
+      "      NOP\n"
       "      SBI %2, %7\n"
       "      SEI\n"
       : "+r" (low), "+r" (counter)
@@ -67,8 +80,10 @@ short ProcessLine(short delayValue)
       "      SBIC %5, %7\n"
       "      SBI %3, %4\n"
       "      CBI %3, %8\n"
-      "      SBI %3, %8\n"
-      "      CBI %3, %8\n"
+      "      NOP\n"
+      "      NOP\n"
+      "      NOP\n"
+      "      NOP\n"
       "      SBI %3, %8\n"
       "      SEI\n"
       : "+r" (low), "+r" (twofivefive), "+r" (counter)
@@ -100,13 +115,49 @@ short GetSyncTime()
   return syncTime;
 }
 
+unsigned char ReadFromSerial()
+{
+  return UDR0;
+}
+
+void PollSerial()
+{
+  if (UCSR0A&(1<<7)) // New serial data available
+  {
+    unsigned char serial=ReadFromSerial(); // Read serial data
+    unsigned char num=serial>>6;
+    unsigned char odd=(serial>>5)&1;
+    fibbles[num]=serial&0x1F;
+    if (odd!=fibbleOdd)
+    {
+      fibbleOdd=odd;
+      fibbleMask=0;
+    }
+    fibbleMask|=(1<<num);
+    if (fibbleMask==0xF)
+    {
+      pointerX=fibbles[0]+(fibbles[1]<<5);
+      pointerY=fibbles[2]+(fibbles[3]<<5);
+      pointerButton=0;
+      if (pointerY>=512)
+      {
+        pointerButton=1;
+        pointerY-=512;
+      }
+      fibbleMask=0; // Save some time by not worry about it for a bit more
+    }
+  }
+}
+
 void WaitForVSync()
 {
   short syncTime = 0;
   while (syncTime < MICROSECONDS_TO_CYCLES(15) / 5)
   {
     syncTime = GetSyncTime();
+    PollSerial();
   }
+  PollSerial();
 }
 
 void WaitForHSync()
@@ -125,53 +176,35 @@ short CalculateDelay(short x)
 
 void loop()
 {
-  static short x = 320, y = 100;
-  short dx=analogRead(2);
-  short dy=analogRead(1);
-  bool trigger=digitalRead(17);
-  if (dx>512+256)
-  {
-    x+=2;
-    if (x>610)
-      x=610;
-  }
-  else if (dx<512-256)
-  {
-    x-=2;
-    if (x<30)
-      x=30;
-  }
-  if (dy>512+256)
-  {
-    y--;
-    if (y<40)
-      y=40;
-  }
-  else if (dy<512-256)
-  {
-    y++;
-    if (y>275)
-      y=275;
-  }
+  unsigned short x,y;
+  unsigned short line = 0;
+  bool trigger;
   WaitForVSync();
   WaitForVSync();
   WaitForVSync();
   delayMicroseconds(20); // Make sure we ignore the first pulse (we can miss it due to interrupts)
-  digitalWrite(13,led || !trigger);
-  short line = 0;
+  x = pointerX;
+  y = pointerY;
+  trigger = !pointerButton;
+  digitalWrite(18, trigger);
+  y+=35; // Ignore blank lines
+  x=(x<20)?20:(x>600)?600:x;
+  y=(y<40)?40:(y>275)?275:y;
+  digitalWrite(13,led);
   while (true)
   {
     if (line == y)
     {
       ProcessLine(CalculateDelay(x));
+      led=1-led;
       break;
     }
     else
     {
       WaitForHSync();
+      PollSerial();
     }
     line++;
   }
-  led=1-led;
 }
 
