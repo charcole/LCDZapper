@@ -4,12 +4,14 @@ int led=0;
 unsigned short pointerX=230;
 unsigned short pointerY=120;
 unsigned char pointerButton=0;
-unsigned char difficulty=0;
+unsigned char difficulty=4;
 unsigned char showPointer=1;
 unsigned char fibbles[4];
 unsigned char fibbleOdd=0;
 unsigned char fibbleMask=0;
 unsigned char fibbleSwitches=0;
+
+unsigned char gapTable[16][16];
 
 void setup() {
   pinMode(0, INPUT); // Serial recieve
@@ -24,18 +26,29 @@ void setup() {
   digitalWrite(18, HIGH);
   Serial.begin(9600);
   UCSR0B&=~((1<<7)|(1<<5)); // Clear RX complete + UDR empty interrupt
+
+  for (short i=0; i<16; i++)
+  {
+    for (short j=0; j<16; j++)
+    {
+      if (j<i)
+        gapTable[i][j]=(i*i-j*j)/i;
+      else
+        gapTable[i][j]=0;
+    }
+  }
 }
 
 void ProcessLine(short delayValue, short offset)
 {
   unsigned char counter=4; // Make sure sync has settled at high level
-  unsigned char localdifficulty=difficulty-offset;
+  unsigned char localdifficulty=gapTable[difficulty][offset];
   unsigned char width=localdifficulty+1;
   delayValue-=9+(localdifficulty*5)/2; // 9 cycles showing cursor preamble + 2.5 cycles for half check interval
-  if (delayValue<MICROSECONDS_TO_CYCLES(6)) // Don't go into back porch
-    delayValue=MICROSECONDS_TO_CYCLES(6);
-  else if (delayValue>MICROSECONDS_TO_CYCLES(6+52)-localdifficulty*5+18) // Don't go off right of screen
-    delayValue=MICROSECONDS_TO_CYCLES(6+52)-localdifficulty*5+12;
+  if (delayValue<MICROSECONDS_TO_CYCLES(7)) // Don't go into back porch
+    delayValue=MICROSECONDS_TO_CYCLES(7);
+  else if (delayValue>MICROSECONDS_TO_CYCLES(7+48)-(localdifficulty*5+18)) // Don't go off right of screen
+    delayValue=MICROSECONDS_TO_CYCLES(7+48)-(localdifficulty*5+18);
   unsigned char lowBits=delayValue&3;
   unsigned char fours=(delayValue>>2)-1;
   unsigned char outdim=PORTD;
@@ -150,7 +163,7 @@ void PollSerial()
         if (!fibbleSwitches)
         {
           difficulty++;
-          if (difficulty>16)
+          if (difficulty>=16)
             difficulty=0;
           fibbleSwitches=1;
         }
