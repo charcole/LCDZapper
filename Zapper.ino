@@ -4,9 +4,12 @@ int led=0;
 unsigned short pointerX=230;
 unsigned short pointerY=120;
 unsigned char pointerButton=0;
+unsigned char difficulty=0;
+unsigned char showPointer=1;
 unsigned char fibbles[4];
 unsigned char fibbleOdd=0;
 unsigned char fibbleMask=0;
+unsigned char fibbleSwitches=0;
 
 void setup() {
   pinMode(0, INPUT); // Serial recieve
@@ -23,21 +26,36 @@ void setup() {
   UCSR0B&=~((1<<7)|(1<<5)); // Clear RX complete + UDR empty interrupt
 }
 
-void ProcessLine(short delayValue)
+void ProcessLine(short delayValue, short offset)
 {
+  unsigned char counter=4; // Make sure sync has settled at high level
+  unsigned char localdifficulty=difficulty-offset;
+  unsigned char width=localdifficulty+1;
+  delayValue-=9+(localdifficulty*5)/2; // 9 cycles showing cursor preamble + 2.5 cycles for half check interval
+  if (delayValue<MICROSECONDS_TO_CYCLES(6)) // Don't go into back porch
+    delayValue=MICROSECONDS_TO_CYCLES(6);
+  else if (delayValue>MICROSECONDS_TO_CYCLES(6+52)-localdifficulty*5+18) // Don't go off right of screen
+    delayValue=MICROSECONDS_TO_CYCLES(6+52)-localdifficulty*5+12;
   unsigned char lowBits=delayValue&3;
   unsigned char fours=(delayValue>>2)-1;
-  unsigned char counter=4; // Make sure sync has settled at high level
+  unsigned char outdim=PORTD;
+  unsigned char out=outdim|(1<<PORTD4);
+  unsigned char dim=0;
+  if (showPointer)
+  {
+    dim=(1<<PORTD3);
+    outdim&=~(1<<PORTD3);
+  }
   asm volatile
   (
     "      CLI\n"
     "LOOPA:\n"
-    "      SBIS %5, %6\n"  // Wait for sync high
+    "      SBIS %6, %7\n"  // Wait for sync high
     "      RJMP LOOPA\n"
     "      DEC %2\n"
     "      BRNE LOOPA\n"
     "LOOPB:\n"
-    "      SBIC %5, %6\n"  // Wait for sync low
+    "      SBIC %6, %7\n"  // Wait for sync low
     "      RJMP LOOPB\n"
     "      SBRS %0, 1\n"
     "      RJMP SKIP2\n"
@@ -51,19 +69,29 @@ void ProcessLine(short delayValue)
     "      NOP\n"
     "      DEC %1\n"
     "      BRNE SKIP1\n"
-    "      SBIC %5, %7\n"
-    "      SBI %3, %4\n"
-    "      CBI %3, %8\n"
+    "      OUT %4, %9\n"      // Show left cursor
+    "      ADD %9, %11\n"
+    "      OUT %4, %9\n"
+    "      NOP\n"             // Balance with right cursor (time to check==time from check)
     "      NOP\n"
     "      NOP\n"
     "      NOP\n"
-    "      SBI %3, %8\n"
+    "      NOP\n"
+    "      NOP\n"
+    "RETESTA:\n"
+    "      SBIC %6, %8\n"
+    "      OUT %4, %10\n"
+    "      DEC %3\n"
+    "      BRNE RETESTA\n"
+    "      IN %9, %4\n"      // Read back in case we set the light sensor pulse
+    "      SUB %9, %11\n"
+    "      OUT %4, %9\n"      // Show right cursor
+    "      ADD %9, %11\n"
+    "      OUT %4, %9\n"
     "      SEI\n"
-    : "+r" (lowBits), "+r" (fours), "+r" (counter)
-    : "I" (_SFR_IO_ADDR(PORTD)), "I" (PORTD4), "I" (_SFR_IO_ADDR(PIND)), "I" (PIND6), "I" (PIND5), "I" (PORTD3)
+    : "+r" (lowBits), "+r" (fours), "+r" (counter), "+r" (width)
+    : "I" (_SFR_IO_ADDR(PORTD)), "I" (PORTD4), "I" (_SFR_IO_ADDR(PIND)), "I" (PIND6), "I" (PIND5), "r" (outdim), "r" (out), "r" (dim)
   );
-  delay(1); // Phosphor decay time
-  digitalWrite(4, LOW);
 }
 
 short GetSyncTime()
@@ -103,11 +131,34 @@ void PollSerial()
     {
       fibbleOdd=odd;
       fibbleMask=0;
+      fibbleSwitches=0;
     }
     fibbleMask|=(1<<num);
     if (fibbleMask==0xF)
     {
-      pointerX=fibbles[0]+(fibbles[1]<<5);
+      unsigned short x=fibbles[0]+(fibbles[1]<<5);
+      if (x==960) // Special code for toggle display
+      {
+        if (!fibbleSwitches)
+        {
+          showPointer=!showPointer;
+          fibbleSwitches=1;
+        }
+      }
+      else if (x==961)
+      {
+        if (!fibbleSwitches)
+        {
+          difficulty++;
+          if (difficulty>16)
+            difficulty=0;
+          fibbleSwitches=1;
+        }
+      }
+      else
+      {
+        pointerX=x;
+      }
       pointerY=fibbles[2]+(fibbles[3]<<5);
       pointerButton=0;
       if (pointerY>=512)
@@ -168,16 +219,24 @@ void loop()
   digitalWrite(13,led);
   while (true)
   {
-    if (line == y)
+    if (line>=y-difficulty && line<=y+difficulty)
     {
-      ProcessLine(CalculateDelay(x));
-      led=1-led;
-      break;
+      ProcessLine(CalculateDelay(x), abs((short)y-(short)line));
     }
     else
     {
       WaitForHSync();
       PollSerial();
+    }
+    if (line>=y+difficulty)
+    {
+      if (PORTD&(1<<PORTD4))
+      {
+        delay(1); // phosphor decay time
+        digitalWrite(4, LOW);
+      }
+      led=1-led;
+      break;
     }
     line++;
   }
