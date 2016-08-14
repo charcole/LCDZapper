@@ -4,12 +4,14 @@ int led=0;
 unsigned short pointerX=230;
 unsigned short pointerY=120;
 unsigned char pointerButton=0;
+unsigned char lastButton=0;
 unsigned char difficulty=4;
 unsigned char showPointer=1;
 unsigned char fibbles[4];
 unsigned char fibbleOdd=0;
 unsigned char fibbleMask=0;
 unsigned char fibbleSwitches=0;
+unsigned char framesSinceLastButton=0;
 
 unsigned char gapTable[16][16];
 
@@ -54,7 +56,7 @@ void ProcessLine(short delayValue, short offset)
   unsigned char outdim=PORTD;
   unsigned char out=outdim|(1<<PORTD4);
   unsigned char dim=0;
-  if (showPointer)
+  if (showPointer==1 || (showPointer==2 && framesSinceLastButton<10))
   {
     dim=(1<<PORTD3);
     outdim&=~(1<<PORTD3);
@@ -154,7 +156,9 @@ void PollSerial()
       {
         if (!fibbleSwitches)
         {
-          showPointer=!showPointer;
+          showPointer=showPointer+1;
+          if (showPointer>=3)
+            showPointer=0;
           fibbleSwitches=1;
         }
       }
@@ -207,9 +211,9 @@ void WaitForHSync()
 short CalculateDelay(short x)
 {
   long cycles=x;
-  cycles=MICROSECONDS_TO_CYCLES(cycles*52);
+  cycles=MICROSECONDS_TO_CYCLES(cycles*48);
   cycles/=640;
-  cycles+=MICROSECONDS_TO_CYCLES(6);
+  cycles+=MICROSECONDS_TO_CYCLES(7);
   return (short)cycles;
 }
 
@@ -226,9 +230,17 @@ void loop()
   y = pointerY;
   trigger = !pointerButton;
   digitalWrite(18, trigger);
-  y+=35; // Ignore blank lines
-  x=(x<20)?20:(x>600)?600:x;
-  y=(y<40)?40:(y>275)?275:y;
+  if (lastButton!=trigger)
+  {
+    if (trigger)
+      framesSinceLastButton=0;
+    lastButton=trigger;
+  }
+  if (framesSinceLastButton<255)
+  {
+    framesSinceLastButton++;
+  }
+  y+=37; // Ignore blank lines
   digitalWrite(13,led);
   while (true)
   {
