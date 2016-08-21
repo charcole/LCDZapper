@@ -20,11 +20,10 @@ void setup() {
   pinMode(6, INPUT); // Sync
   pinMode(5, INPUT); // White
   pinMode(4, OUTPUT); // Photosensor
-  pinMode(3, OUTPUT); // Dimmer
+  pinMode(3, INPUT); // Dimmer
   pinMode(13, OUTPUT); // LED
   pinMode(17, INPUT_PULLUP); // Button
   pinMode(18, OUTPUT); // Trigger
-  digitalWrite(3, HIGH);
   digitalWrite(18, HIGH);
   Serial.begin(9600);
   UCSR0B&=~((1<<7)|(1<<5)); // Clear RX complete + UDR empty interrupt
@@ -53,13 +52,12 @@ void ProcessLine(short delayValue, short offset)
     delayValue=MICROSECONDS_TO_CYCLES(7+48)-(localdifficulty*5+18);
   unsigned char lowBits=delayValue&3;
   unsigned char fours=(delayValue>>2)-1;
-  unsigned char outdim=PORTD;
-  unsigned char out=outdim|(1<<PORTD4);
-  unsigned char dim=0;
+  unsigned char out=PORTD|(1<<PORTD4);
+  unsigned char dimOff=DDRD&~(1<<PORTD3);
+  unsigned char dimOn=dimOff;
   if (showPointer==1 || (showPointer==2 && framesSinceLastButton<10))
   {
-    dim=(1<<PORTD3);
-    outdim&=~(1<<PORTD3);
+    dimOn =DDRD| (1<<PORTD3);
   }
   asm volatile
   (
@@ -84,13 +82,10 @@ void ProcessLine(short delayValue, short offset)
     "      NOP\n"
     "      DEC %1\n"
     "      BRNE SKIP1\n"
-    "      OUT %4, %9\n"      // Show left cursor
-    "      ADD %9, %11\n"
-    "      OUT %4, %9\n"
+    "      OUT %12, %9\n"     // Show left cursor
+    "      NOP\n"             // Can't see cursor without this extra delay
+    "      OUT %12, %11\n"
     "      NOP\n"             // Balance with right cursor (time to check==time from check)
-    "      NOP\n"
-    "      NOP\n"
-    "      NOP\n"
     "      NOP\n"
     "      NOP\n"
     "RETESTA:\n"
@@ -98,14 +93,12 @@ void ProcessLine(short delayValue, short offset)
     "      OUT %4, %10\n"
     "      DEC %3\n"
     "      BRNE RETESTA\n"
-    "      IN %9, %4\n"      // Read back in case we set the light sensor pulse
-    "      SUB %9, %11\n"
-    "      OUT %4, %9\n"      // Show right cursor
-    "      ADD %9, %11\n"
-    "      OUT %4, %9\n"
+    "      OUT %12, %9\n"     // Show right cursor
+    "      NOP\n"             // Can't see cursor without this extra delay
+    "      OUT %12, %11\n"
     "      SEI\n"
     : "+r" (lowBits), "+r" (fours), "+r" (counter), "+r" (width)
-    : "I" (_SFR_IO_ADDR(PORTD)), "I" (PORTD4), "I" (_SFR_IO_ADDR(PIND)), "I" (PIND6), "I" (PIND5), "r" (outdim), "r" (out), "r" (dim)
+    : "I" (_SFR_IO_ADDR(PORTD)), "I" (PORTD4), "I" (_SFR_IO_ADDR(PIND)), "I" (PIND6), "I" (PIND5), "r" (dimOn), "r" (out), "r" (dimOff), "I" (_SFR_IO_ADDR(DDRD))
   );
 }
 
@@ -171,6 +164,10 @@ void PollSerial()
             difficulty=0;
           fibbleSwitches=1;
         }
+      }
+      else if (x==962)
+      {
+        pointerX=~0;
       }
       else
       {
@@ -244,7 +241,7 @@ void loop()
   digitalWrite(13,led);
   while (true)
   {
-    if (line>=y-difficulty && line<=y+difficulty)
+    if (line>=y-difficulty && line<=y+difficulty && pointerX!=~0)
     {
       ProcessLine(CalculateDelay(x), abs((short)y-(short)line));
     }
