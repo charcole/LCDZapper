@@ -5,7 +5,7 @@ Homebrew device for making lightgun games playable on modern LCD TVs.
 Check out the video of it in action here:
 https://youtu.be/DzIPGpKo3Ag
 
-/Disclaimer: This is very cobbled together and in no way an easy to follow guide for how to make one. Just want to share the ideas though so other people can understand the ideas and hopefully replicate it themselves. If there's a lot of feedback then I'll consider tidying it up and making something easier to follow. This is also only been test on PAL systems so there will need to be tweaks to the Arduino code to get working with NTSC machines./
+*Disclaimer: This is very cobbled together and in no way an easy to follow guide for how to make one. Just want to share the ideas though so other people can understand the ideas and hopefully replicate it themselves. If there's a lot of feedback then I'll consider tidying it up and making something easier to follow. This is also only been test on PAL systems so there will need to be tweaks to the Arduino code to get working with NTSC machines.*
 
 The Device
 ----------
