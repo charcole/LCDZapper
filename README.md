@@ -12,7 +12,7 @@ The Device
 
 The main three parts are...
 - An analogue board for separating sync and trimmable white level
-- An Adafruit Trinket Pro to do the timings and to flash the LED at the right time
+- An 5V 16MHz Adafruit Trinket Pro to do the timings and to flash the LED at the right time
 - A Raspberry Pi with Bluetooth dongle to interface with Wiimote
 
 The analogue board uses a LM1881 to extract the composite sync from the input composite video. This was originally done using the spare channel of the LM319 but because difficult to get working reliably when using capacitive coupled video signals (like on the Dreamcast). White level is less critical and uses an LM319 to just detect it's above a certain level (settable via a trimmer). Before feeding the single into the LM319 it first goes through an AD817 to amplify it slightly but mainly to shift the input signal into the common mode range of the LM319. After the AD817 it also runs through a simple resistor/capacitor low pass filter to try and strip out the colour component.
