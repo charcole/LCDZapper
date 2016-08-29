@@ -42,7 +42,7 @@ void setup() {
 
 void ProcessLine(short delayValue, short offset)
 {
-  unsigned char counter=4; // Make sure sync has settled at high level
+  unsigned char counter=4; // Make sure sync has settled at low level
   unsigned char localdifficulty=gapTable[difficulty][offset];
   unsigned char width=localdifficulty+1;
   delayValue-=9+(localdifficulty*5)/2; // 9 cycles showing cursor preamble + 2.5 cycles for half check interval
@@ -52,6 +52,7 @@ void ProcessLine(short delayValue, short offset)
     delayValue=MICROSECONDS_TO_CYCLES(7+48)-(localdifficulty*5+18);
   unsigned char lowBits=delayValue&3;
   unsigned char fours=(delayValue>>2)-1;
+  unsigned char out2=PORTD;
   unsigned char out=PORTD|(1<<PORTD4);
   unsigned char dimOff=DDRD&~(1<<PORTD3);
   unsigned char dimOn=dimOff;
@@ -63,12 +64,12 @@ void ProcessLine(short delayValue, short offset)
   (
     "      CLI\n"
     "LOOPA:\n"
-    "      SBIS %6, %7\n"  // Wait for sync high
+    "      SBIC %6, %7\n"  // Wait for sync low
     "      RJMP LOOPA\n"
     "      DEC %2\n"
     "      BRNE LOOPA\n"
     "LOOPB:\n"
-    "      SBIC %6, %7\n"  // Wait for sync low
+    "      SBIS %6, %7\n"  // Wait for sync high
     "      RJMP LOOPB\n"
     "      SBRS %0, 1\n"
     "      RJMP SKIP2\n"
@@ -96,9 +97,18 @@ void ProcessLine(short delayValue, short offset)
     "      OUT %12, %9\n"     // Show right cursor
     "      NOP\n"             // Can't see cursor without this extra delay
     "      OUT %12, %11\n"
+    "      NOP\n" // Wait half a microsecond to simulate phosphorous falloff
+    "      NOP\n"
+    "      NOP\n"
+    "      NOP\n"
+    "      NOP\n"
+    "      NOP\n"
+    "      NOP\n"
+    "      NOP\n"
+    "      OUT %4, %13\n"
     "      SEI\n"
     : "+r" (lowBits), "+r" (fours), "+r" (counter), "+r" (width)
-    : "I" (_SFR_IO_ADDR(PORTD)), "I" (PORTD4), "I" (_SFR_IO_ADDR(PIND)), "I" (PIND6), "I" (PIND5), "r" (dimOn), "r" (out), "r" (dimOff), "I" (_SFR_IO_ADDR(DDRD))
+    : "I" (_SFR_IO_ADDR(PORTD)), "I" (PORTD4), "I" (_SFR_IO_ADDR(PIND)), "I" (PIND6), "I" (PIND5), "r" (dimOn), "r" (out), "r" (dimOff), "I" (_SFR_IO_ADDR(DDRD)), "r" (out2)
   );
 }
 
@@ -108,12 +118,12 @@ short GetSyncTime()
   asm volatile
   (
     "      CLI\n"
-    "LOOP1:\n" // Wait for sync high
-    "      SBIS %1, %2\n"
+    "LOOP1:\n" // Wait for sync low
+    "      SBIC %1, %2\n"
     "      RJMP LOOP1\n"
-    "LOOP2:\n" // Wait for sync low
+    "LOOP2:\n" // Wait for sync high
     "      ADIW %0, 1\n"   // 2 cycles
-    "      SBIC %1, %2\n"  // 1 cycle when false
+    "      SBIS %1, %2\n"  // 1 cycle when false
     "      RJMP LOOP2\n" // 2 cycles
     "      SEI\n"
     : "+r" (syncTime)
@@ -224,6 +234,7 @@ void loop()
   WaitForVSync();
   delayMicroseconds(20); // Make sure we ignore the first pulse (we can miss it due to interrupts)
   x = pointerX;
+  short calculatedDelay=CalculateDelay(x);
   y = pointerY;
   trigger = !pointerButton;
   digitalWrite(18, trigger);
@@ -243,7 +254,7 @@ void loop()
   {
     if (line>=y-difficulty && line<=y+difficulty && pointerX!=~0)
     {
-      ProcessLine(CalculateDelay(x), abs((short)y-(short)line));
+      ProcessLine(calculatedDelay, abs((short)y-(short)line));
     }
     else
     {
