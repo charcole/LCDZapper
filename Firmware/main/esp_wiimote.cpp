@@ -243,9 +243,13 @@ private:
 public:
 	static void InitBluetooth()
 	{
+#ifdef BT_CONTROLLER_INIT_CONFIG_DEFAULT
 		esp_bt_controller_config_t BluetoothConfig = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
 		esp_bt_controller_init(&BluetoothConfig);
 		esp_bt_controller_enable(ESP_BT_MODE_BTDM);
+#else
+		esp_bt_controller_init();
+#endif
 		VHCICallbacks.notify_host_send_available = SendReady;
 		VHCICallbacks.notify_host_recv = ReceivePacket;
 		esp_vhci_host_register_callback(&VHCICallbacks);
@@ -1617,7 +1621,7 @@ IWiimote* WiimoteManager::CreateNewWiimote()
 		if (!Wiimotes[i])
 		{
 			Wiimotes[i] = new WiimoteBluetoothConnection();
-			Wiimotes[i]->Open(0xC);
+			Wiimotes[i]->Open(1<<i);
 			return Wiimotes[i];
 		}
 	}
@@ -1634,9 +1638,6 @@ void WiimoteManager::Tick()
 		if (Wiimotes[i])
 		{
 			Wiimotes[i]->Tick();
-			if (Wiimotes[i]->IsConnected())
-			{
-			}
 		}
 	}
 }
