@@ -11,13 +11,14 @@ extern "C"
 };
 #include "esp_wiimote.h"
 
-#define OUT_TRIGGER_PULLED (GPIO_NUM_13) // Used for Wiimote-only operation
-#define OUT_SCREEN_DIM  (GPIO_NUM_16) // Original dim
-#define OUT_SCREEN_DIM_INV (GPIO_NUM_21) // Inverted dim
+#define OUT_SCREEN_DIM  (GPIO_NUM_16) // Controls drawing spot on screen
+#define OUT_SCREEN_DIM_INV (GPIO_NUM_21) // Inverted version of above
 #define OUT_PLAYER1_LED (GPIO_NUM_26) // ANDed with detected white level in HW
 #define OUT_PLAYER2_LED (GPIO_NUM_27) // ANDed with detected white level in HW
 #define OUT_PLAYER1_LED_OUT_SELECTION_REG (GPIO_FUNC26_OUT_SEL_CFG_REG) // Used to turn on and off player LED output (for supporting two player)
 #define OUT_PLAYER2_LED_OUT_SELECTION_REG (GPIO_FUNC27_OUT_SEL_CFG_REG) // Used to turn on and off player LED output (for supporting two player)
+#define OUT_PLAYER1_TRIGGER_PULLED (GPIO_NUM_13) // Used for Wiimote-only operation
+#define OUT_PLAYER2_TRIGGER_PULLED (GPIO_NUM_14) // Used for Wiimote-only operation
 
 #define IN_COMPOSITE_SYNC (GPIO_NUM_19) // Compsite sync input (If changed change also in asm loop)
 #define IN_VERTICAL_SYNC (GPIO_NUM_18) // Vertical sync input
@@ -34,7 +35,8 @@ extern "C"
 #define ARRAY_NUM(x) (sizeof(x)/sizeof(x[0]))
 
 static int CurrentLine = 0;
-static int PlayerMask = 0; // 0=player 1, 1=allowing second player
+static int PlayerMask = 0; // Set to 1 for two player
+static int CoopMask = 1; // Set to 0 for co-op play
 static int ReticuleStartLineNum[2] = { 100,100 };
 static int ReticuleXPosition[2] = { 320,320 };
 static int ReticuleSizeLookup[14];
@@ -44,34 +46,63 @@ void WiimoteTask(void *pvParameters)
 	printf("WiimoteTask running on core %d\n", xPortGetCoreID());
 	GWiimoteManager.Init();
 	bool ShowPointer = true;
-	bool HomeWasPressed = false;
-	IWiimote *Player1 = GWiimoteManager.CreateNewWiimote();
+	bool HomeWasPressed[2] = {false, false};
+	bool ButtonPressed[2] = {false, false};
+	int FrameNumber[2]={0,0};
+	IWiimote *Player[2];
+	Player[0] = GWiimoteManager.CreateNewWiimote();
+	Player[1] = GWiimoteManager.CreateNewWiimote();
 	while (true)
 	{
 		GWiimoteManager.Tick();
-		const WiimoteData *Data = Player1->GetData();
-		bool HomePressed = (Data->Buttons & WiimoteData::kButton_Home);
-		if (HomePressed && !HomeWasPressed)
+		for (int PlayerIdx=0; PlayerIdx<2; PlayerIdx++)
 		{
-			ShowPointer = !ShowPointer;
-			gpio_matrix_out(OUT_SCREEN_DIM, ShowPointer ? RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL : SIG_GPIO_OUT_IDX, false, false);
-			gpio_matrix_out(OUT_SCREEN_DIM_INV, ShowPointer ? RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL : SIG_GPIO_OUT_IDX, true, false);
+			const WiimoteData *Data = Player[PlayerIdx]->GetData();
+			if (Data->FrameNumber != FrameNumber[PlayerIdx])
+			{
+				FrameNumber[PlayerIdx] = Data->FrameNumber;
+				bool HomePressed = (Data->Buttons & WiimoteData::kButton_Home);
+				if (HomePressed && !HomeWasPressed[PlayerIdx])
+				{
+					ShowPointer = !ShowPointer;
+					gpio_matrix_out(OUT_SCREEN_DIM, ShowPointer ? RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL : SIG_GPIO_OUT_IDX, false, false);
+					gpio_matrix_out(OUT_SCREEN_DIM_INV, ShowPointer ? RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL : SIG_GPIO_OUT_IDX, true, false);
+				}
+				HomeWasPressed[PlayerIdx] = HomePressed;
+
+				ButtonPressed[PlayerIdx] = ((Data->Buttons & (WiimoteData::kButton_B | WiimoteData::kButton_A)) != 0);
+
+				if (Data->Buttons & WiimoteData::kButton_Plus)
+					CoopMask = 0;	// Enable co-op
+
+				if (Data->Buttons & WiimoteData::kButton_Minus)
+					CoopMask = 1;	// Disable co-op
+
+				if (Data->IRSpot[0].X != 0x3FF || Data->IRSpot[0].Y != 0x3FF)
+				{
+					ReticuleXPosition[PlayerIdx] = TIMING_BACK_PORCH + (TIMING_LINE_DURATION*(1023 - Data->IRSpot[0].X)) / 1024;
+					ReticuleStartLineNum[PlayerIdx] = TIMING_BLANKED_LINES + (TIMING_VISIBLE_LINES*(Data->IRSpot[0].Y + Data->IRSpot[0].Y / 3)) / 1024;
+				}
+				else
+				{
+					ReticuleStartLineNum[PlayerIdx] = 1000; // Don't draw
+				}
+				if (PlayerIdx == 1)
+				{
+					PlayerMask = 1; // If second Wiimote connected enable two player mode
+				}
+			}
 		}
-		HomeWasPressed = HomePressed;
-
-		bool ButtonPressed = (Data->Buttons & (WiimoteData::kButton_B | WiimoteData::kButton_A));
-		gpio_set_level(OUT_TRIGGER_PULLED, ButtonPressed);
-
-		if (Data->IRSpot[0].X != 0x3FF || Data->IRSpot[0].Y != 0x3FF)
+		if (CoopMask == 0)
 		{
-			ReticuleXPosition[0] = TIMING_BACK_PORCH + (TIMING_LINE_DURATION*(1023 - Data->IRSpot[0].X)) / 1024;
-			ReticuleStartLineNum[0] = TIMING_BLANKED_LINES + (TIMING_VISIBLE_LINES*(Data->IRSpot[0].Y + Data->IRSpot[0].Y / 3)) / 1024;
+			gpio_set_level(OUT_PLAYER1_TRIGGER_PULLED, ButtonPressed[0] || ButtonPressed[1]);
+			gpio_set_level(OUT_PLAYER2_TRIGGER_PULLED, false);
 		}
 		else
 		{
-			ReticuleStartLineNum[0] = 1000; // Don't draw
+			gpio_set_level(OUT_PLAYER1_TRIGGER_PULLED, ButtonPressed[0]);
+			gpio_set_level(OUT_PLAYER2_TRIGGER_PULLED, ButtonPressed[1]);
 		}
-
 		vTaskDelay(1);
 	}
 }
@@ -163,9 +194,9 @@ void IRAM_ATTR CompositeSyncInterrupt(void* arg)
 			int XCoordinate = ReticuleXPosition[CurrentPlayer];
 			if (CurrentLine >= StartingLine && CurrentLine < StartingLine + ARRAY_NUM(ReticuleSizeLookup))
 			{
-				// Switch player 1 and 2
-				WRITE_PERI_REG(CurrentPlayer ? OUT_PLAYER1_LED_OUT_SELECTION_REG : OUT_PLAYER2_LED_OUT_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S)); // Keep this line high (not used)
-				WRITE_PERI_REG(CurrentPlayer ? OUT_PLAYER2_LED_OUT_SELECTION_REG : OUT_PLAYER1_LED_OUT_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | ((RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL) << GPIO_FUNC0_OUT_SEL_S)); // Output pulse
+				int OutputSelect = CurrentPlayer&CoopMask; // In co-op always output to player 1's gun otherwise select which gun to go to
+				WRITE_PERI_REG(OutputSelect ? OUT_PLAYER1_LED_OUT_SELECTION_REG : OUT_PLAYER2_LED_OUT_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S)); // Keep this line high (not used)
+				WRITE_PERI_REG(OutputSelect ? OUT_PLAYER2_LED_OUT_SELECTION_REG : OUT_PLAYER1_LED_OUT_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | ((RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL) << GPIO_FUNC0_OUT_SEL_S)); // Output pulse
 				rmt_item32_t HorizontalPulse;
 				HorizontalPulse.level0 = 1;
 				HorizontalPulse.duration0 = XCoordinate - ReticuleSizeLookup[CurrentLine - StartingLine];
@@ -239,10 +270,13 @@ void InitializeMiscGPIO()
 {
 	gpio_config_t TriggerPullOutput;
 	TriggerPullOutput.intr_type = GPIO_INTR_DISABLE;
-	TriggerPullOutput.pin_bit_mask = BIT(OUT_TRIGGER_PULLED);
+	TriggerPullOutput.pin_bit_mask = BIT(OUT_PLAYER1_TRIGGER_PULLED);
 	TriggerPullOutput.mode = GPIO_MODE_OUTPUT;
 	TriggerPullOutput.pull_up_en = GPIO_PULLUP_DISABLE;
 	TriggerPullOutput.pull_down_en = GPIO_PULLDOWN_DISABLE;
+	gpio_config(&TriggerPullOutput);
+
+	TriggerPullOutput.pin_bit_mask = BIT(OUT_PLAYER2_TRIGGER_PULLED);
 	gpio_config(&TriggerPullOutput);
 }
 
