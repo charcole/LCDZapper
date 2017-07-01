@@ -48,9 +48,12 @@ static uint16_t CalibrateText[4][TEXT_NUM_LINES] =
 	{0x400, 0xA48, 0xEE5, 0xA43, 0xA07},	// Down left
 	{0x400, 0xA41, 0xEEA, 0xA4C, 0xA0E}	    // Down right
 };
+static uint16_t CoopText[TEXT_NUM_LINES] = { 0xF93, 0x029, 0xC93, 0xD40, 0x49F };
+static uint16_t DuelText[TEXT_NUM_LINES] = { 0x5AA, 0x4AA, 0x5AB, 0x4AB, 0xDBB };
 
 static bool TextMode = true;
 static uint16_t *DisplayText = OneAndTwoText;
+static int DisplayTime = 0;
 static bool ShowPointer = true;
 static bool DoingCalibration = false;
 static int CurrentLine = 0;
@@ -126,6 +129,25 @@ public:
 				}
 			}
 
+			if (PlayerMask != 0)
+			{
+				if (!DoingCalibration && (Data->Buttons & WiimoteData::kButton_Plus))
+				{
+					CoopMask = 0;	// Enable co-op
+					DisplayText = CoopText;
+					DisplayTime = 1500;
+					TextMode = true;
+				}
+
+				if (!DoingCalibration && (Data->Buttons & WiimoteData::kButton_Minus))
+				{
+					CoopMask = 1;	// Disable co-op
+					DisplayText = DuelText;
+					DisplayTime = 1500;
+					TextMode = true;
+				}
+			}
+
 			if (Data->Buttons & WiimoteData::kButton_Up)
 			{
 				if (CalibrationPhase != 4)
@@ -141,13 +163,8 @@ public:
 				CalibrationPhase = 0;
 				DoneCalibration = false;
 				DoingCalibration = true;
+				DisplayTime = 0;
 			}
-
-			if (Data->Buttons & WiimoteData::kButton_Plus)
-				CoopMask = 0;	// Enable co-op
-
-			if (Data->Buttons & WiimoteData::kButton_Minus)
-				CoopMask = 1;	// Disable co-op
 
 			if (CalibrationPhase < 4)
 			{
@@ -217,7 +234,7 @@ public:
 				{
 					TextMode = false;	// Turn off sync message once connected
 				}
-				else if (!DoingCalibration)
+				else if (!DoingCalibration && DisplayTime <= 0)
 				{
 					TextMode = false;	// Turn off calibration message
 				}
@@ -320,6 +337,10 @@ void WiimoteTask(void *pvParameters)
 		{
 			gpio_set_level(OUT_PLAYER1_TRIGGER_PULLED, Player1Button);
 			gpio_set_level(OUT_PLAYER2_TRIGGER_PULLED, Player2Button);
+		}
+		if (DisplayTime > 0)
+		{
+			DisplayTime--;
 		}
 		vTaskDelay(1);
 	}
