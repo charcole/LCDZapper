@@ -31,14 +31,32 @@ extern "C"
 #define TIMING_LINE_DURATION  8*465 // In 80ths of a microsecond  (Should be about 52*80 but need to clip when off edge)
 #define TIMING_BLANKED_LINES 24		// Should be about 16?
 #define TIMING_VISIBLE_LINES 250	// Should be 288
+#define TEXT_PIXEL_VERTICAL_SIZE 16
+#define TEXT_START_LINE 105
+#define TEXT_NUM_LINES 5
+#define TEXT_END_LINE (TEXT_START_LINE + TEXT_PIXEL_VERTICAL_SIZE*TEXT_NUM_LINES)
+#define TEXT_PIXEL_HORIZONTAL_SIZE (TIMING_LINE_DURATION / 24)
+#define TEXT_HORIZONTAL_OFFSET (6*TEXT_PIXEL_HORIZONTAL_SIZE)
 
 #define ARRAY_NUM(x) (sizeof(x)/sizeof(x[0]))
 
+static uint16_t OneAndTwoText[TEXT_NUM_LINES] = { 0x602, 0x923, 0x472, 0x222, 0xF07 };
+static uint16_t CalibrateText[4][TEXT_NUM_LINES] =
+{
+	{0x407, 0xA43, 0xEE5, 0xA48, 0xA00},	// Up left
+	{0x40E, 0xA4C, 0xEEA, 0xA41, 0xA00},	// Up right
+	{0x400, 0xA48, 0xEE5, 0xA43, 0xA07},	// Down left
+	{0x400, 0xA41, 0xEEA, 0xA4C, 0xA0E}	    // Down right
+};
+
+static bool TextMode = true;
+static uint16_t *DisplayText = OneAndTwoText;
 static bool ShowPointer = true;
+static bool DoingCalibration = false;
 static int CurrentLine = 0;
 static int PlayerMask = 0; // Set to 1 for two player
 static int CoopMask = 1; // Set to 0 for co-op play
-static int ReticuleStartLineNum[2] = { 100,100 };
+static int ReticuleStartLineNum[2] = { 1000,1000 };
 static int ReticuleXPosition[2] = { 320,320 };
 static int ReticuleSizeLookup[14];
 
@@ -104,19 +122,25 @@ public:
 					CalibrationData[CalibrationPhase].Y = (float)Data->IRSpot[0].Y;
 					CalibrationPhase++;
 					DoneCalibration = (CalibrationPhase == 4);
+					DoingCalibration = !DoneCalibration;
 				}
 			}
 
 			if (Data->Buttons & WiimoteData::kButton_Up)
 			{
-				CalibrationPhase = 4;
+				if (CalibrationPhase != 4)
+				{
+					CalibrationPhase = 4;
+					DoingCalibration = false;
+				}
 				DoneCalibration = false;
 			}
 			
-			if (Data->Buttons & WiimoteData::kButton_Down)
+			if (!DoingCalibration && (Data->Buttons & WiimoteData::kButton_Down))
 			{
 				CalibrationPhase = 0;
 				DoneCalibration = false;
+				DoingCalibration = true;
 			}
 
 			if (Data->Buttons & WiimoteData::kButton_Plus)
@@ -127,6 +151,8 @@ public:
 
 			if (CalibrationPhase < 4)
 			{
+				DisplayText = CalibrateText[CalibrationPhase];
+				TextMode = true;
 				switch (CalibrationPhase)
 				{
 					case 0:
@@ -183,6 +209,18 @@ public:
 			if (PlayerIdx == 1)
 			{
 				PlayerMask = 1; // If second Wiimote connected enable two player mode
+			}
+
+			if (TextMode)
+			{
+				if (DisplayText == OneAndTwoText)
+				{
+					TextMode = false;	// Turn off sync message once connected
+				}
+				else if (!DoingCalibration)
+				{
+					TextMode = false;	// Turn off calibration message
+				}
 			}
 
 			OldButtons = Data->Buttons;
@@ -339,7 +377,7 @@ static void RMTPeripheralInit()
 
 }
 
-inline void IRAM_ATTR ActiveRMTOnSyncFallingEdge(void)
+inline void IRAM_ATTR ActivateRMTOnSyncFallingEdge(void)
 {
 	// Tight loop that sits spinning until GPIO19 (see assembly) aka IN_COMPOSITE_SYNC falls low and then starts RMT peripheral
 
@@ -369,6 +407,7 @@ void IRAM_ATTR CompositeSyncInterrupt(void* arg)
 	{
 		if ((GPIO.in & BIT(IN_VERTICAL_SYNC)) == 0)
 		{
+			bool Active = false;
 			int CurrentPlayer = (CurrentLine & 1) & PlayerMask;
 			int StartingLine = ReticuleStartLineNum[CurrentPlayer];
 			int XCoordinate = ReticuleXPosition[CurrentPlayer];
@@ -383,7 +422,45 @@ void IRAM_ATTR CompositeSyncInterrupt(void* arg)
 				HorizontalPulse.level1 = 0;
 				HorizontalPulse.duration1 = 2 * ReticuleSizeLookup[CurrentLine - StartingLine];
 				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[0].val = HorizontalPulse.val;
-				ActiveRMTOnSyncFallingEdge();
+				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[1].val = 0;
+				Active = true;
+			}
+			else if (TextMode && CurrentLine >= TEXT_START_LINE && CurrentLine < TEXT_END_LINE)
+			{
+				WRITE_PERI_REG(OUT_PLAYER1_LED_OUT_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S)); // Keep this line high (not used)
+				WRITE_PERI_REG(OUT_PLAYER2_LED_OUT_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S)); // Keep this line high (not used)
+				uint16_t *Text = DisplayText;
+				if (Text)
+				{
+					uint16_t Line = Text[(CurrentLine - TEXT_START_LINE) / TEXT_PIXEL_VERTICAL_SIZE];
+					uint16_t Mask = 1;
+					rmt_item32_t HorizontalPulse;
+					HorizontalPulse.level0 = 1;
+					HorizontalPulse.duration0 = TIMING_BACK_PORCH;
+					HorizontalPulse.level1 = 1;
+					HorizontalPulse.duration1 = TEXT_HORIZONTAL_OFFSET;
+					RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[0].val = HorizontalPulse.val;
+					for (int i = 0; i < 6; i++)
+					{
+						HorizontalPulse.level0 = (Line & Mask) ? 0 : 1;
+						HorizontalPulse.duration0 = TEXT_PIXEL_HORIZONTAL_SIZE;
+						Mask <<= 1;
+						HorizontalPulse.level1 = (Line & Mask) ? 0 : 1;
+						HorizontalPulse.duration1 = TEXT_PIXEL_HORIZONTAL_SIZE;
+						Mask <<= 1;
+						RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[i+1].val = HorizontalPulse.val;
+					}
+					HorizontalPulse.level0 = 1;
+					HorizontalPulse.duration0 = 0;
+					HorizontalPulse.level1 = 1;
+					HorizontalPulse.duration1 = 0;
+					RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[7].val = HorizontalPulse.val;
+					Active = true;
+				}
+			}
+			if (Active)
+			{
+				ActivateRMTOnSyncFallingEdge();
 			}
 			CurrentLine++;
 		}
