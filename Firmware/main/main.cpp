@@ -34,6 +34,7 @@ extern "C"
 
 #define ARRAY_NUM(x) (sizeof(x)/sizeof(x[0]))
 
+static bool ShowPointer = true;
 static int CurrentLine = 0;
 static int PlayerMask = 0; // Set to 1 for two player
 static int CoopMask = 1; // Set to 0 for co-op play
@@ -41,67 +42,246 @@ static int ReticuleStartLineNum[2] = { 100,100 };
 static int ReticuleXPosition[2] = { 320,320 };
 static int ReticuleSizeLookup[14];
 
+class PlayerInput
+{
+private:
+	struct Vector2D
+	{
+		Vector2D()
+		{
+			X = Y = 0.0f;
+		}
+		Vector2D(float InX, float InY)
+		{
+			X = InX;
+			Y = InY;
+		}
+		Vector2D operator-(const Vector2D &RHS) const
+		{
+			return Vector2D(X - RHS.X, Y - RHS.Y);
+		}
+		Vector2D operator+(const Vector2D &RHS) const
+		{
+			return Vector2D(X + RHS.X, Y + RHS.Y);
+		}
+		Vector2D operator*(const float &RHS) const
+		{
+			return Vector2D(X * RHS, Y * RHS);
+		}
+		float X;
+		float Y;
+	};
+
+public:
+	PlayerInput(int PlayerNum)
+	{
+		Wiimote = GWiimoteManager.CreateNewWiimote();
+		FrameNumber = 0;
+		OldButtons = 0;
+		PlayerIdx = PlayerNum;
+		CalibrationPhase = 4;
+		DoneCalibration = false;
+	}
+
+	void Tick()
+	{
+		const WiimoteData *Data = Wiimote->GetData();
+		if (Data->FrameNumber != FrameNumber)
+		{
+			FrameNumber = Data->FrameNumber;
+			if (ButtonClicked(Data->Buttons, WiimoteData::kButton_Home))
+			{
+				ShowPointer = !ShowPointer;
+				gpio_matrix_out(OUT_SCREEN_DIM, ShowPointer ? RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL : SIG_GPIO_OUT_IDX, false, false);
+				gpio_matrix_out(OUT_SCREEN_DIM_INV, ShowPointer ? RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL : SIG_GPIO_OUT_IDX, true, false);
+			}
+
+			if (CalibrationPhase < 4 && ButtonClicked(Data->Buttons, (WiimoteData::kButton_B | WiimoteData::kButton_A)))
+			{
+				if (Data->IRSpot[0].X != 0x3FF || Data->IRSpot[0].Y != 0x3FF)
+				{
+					CalibrationData[CalibrationPhase].X = (float)Data->IRSpot[0].X;
+					CalibrationData[CalibrationPhase].Y = (float)Data->IRSpot[0].Y;
+					CalibrationPhase++;
+					DoneCalibration = (CalibrationPhase == 4);
+				}
+			}
+
+			if (Data->Buttons & WiimoteData::kButton_Up)
+			{
+				CalibrationPhase = 4;
+				DoneCalibration = false;
+			}
+			
+			if (Data->Buttons & WiimoteData::kButton_Down)
+			{
+				CalibrationPhase = 0;
+				DoneCalibration = false;
+			}
+
+			if (Data->Buttons & WiimoteData::kButton_Plus)
+				CoopMask = 0;	// Enable co-op
+
+			if (Data->Buttons & WiimoteData::kButton_Minus)
+				CoopMask = 1;	// Disable co-op
+
+			if (CalibrationPhase < 4)
+			{
+				switch (CalibrationPhase)
+				{
+					case 0:
+						ReticuleXPosition[PlayerIdx] = TIMING_BACK_PORCH;
+						ReticuleStartLineNum[PlayerIdx] = TIMING_BLANKED_LINES;
+						break;
+					case 1:
+						ReticuleXPosition[PlayerIdx] = TIMING_BACK_PORCH + TIMING_LINE_DURATION;
+						ReticuleStartLineNum[PlayerIdx] = TIMING_BLANKED_LINES;
+						break;
+					case 2:
+						ReticuleXPosition[PlayerIdx] = TIMING_BACK_PORCH;
+						ReticuleStartLineNum[PlayerIdx] = TIMING_BLANKED_LINES + TIMING_VISIBLE_LINES;
+						break;
+					case 3:
+						ReticuleXPosition[PlayerIdx] = TIMING_BACK_PORCH + TIMING_LINE_DURATION;
+						ReticuleStartLineNum[PlayerIdx] = TIMING_BLANKED_LINES + TIMING_VISIBLE_LINES;
+						break;
+
+				}
+			}
+			else
+			{
+				if (DoneCalibration)
+				{
+					Vector2D Spot = Vector2D((float)Data->IRSpot[0].X, (float)Data->IRSpot[0].Y);
+					if (Within(Spot))
+					{
+						Spot = RemapVector(Spot);
+						Spot = Spot * 1023.0f;
+						ReticuleXPosition[PlayerIdx] = TIMING_BACK_PORCH + (TIMING_LINE_DURATION*(int)Spot.X) / 1024;
+						ReticuleStartLineNum[PlayerIdx] = TIMING_BLANKED_LINES + (TIMING_VISIBLE_LINES*(int)Spot.Y) / 1024;
+
+					}
+					else
+					{
+						ReticuleStartLineNum[PlayerIdx] = 1000; // Don't draw
+					}
+				}
+				else
+				{
+					if (Data->IRSpot[0].X != 0x3FF || Data->IRSpot[0].Y != 0x3FF)
+					{
+						ReticuleXPosition[PlayerIdx] = TIMING_BACK_PORCH + (TIMING_LINE_DURATION*(1023 - Data->IRSpot[0].X)) / 1024;
+						ReticuleStartLineNum[PlayerIdx] = TIMING_BLANKED_LINES + (TIMING_VISIBLE_LINES*(Data->IRSpot[0].Y + Data->IRSpot[0].Y / 3)) / 1024;
+					}
+					else
+					{
+						ReticuleStartLineNum[PlayerIdx] = 1000; // Don't draw
+					}
+				}
+			}
+			
+			if (PlayerIdx == 1)
+			{
+				PlayerMask = 1; // If second Wiimote connected enable two player mode
+			}
+
+			OldButtons = Data->Buttons;
+		}
+	}
+
+	bool ButtonClicked(int ButtonFlags, int ButtonSelect)
+	{
+		return ((ButtonFlags & ButtonSelect) && !(OldButtons & ButtonSelect));
+	}
+
+	bool ButtonWasPressed(int ButtonSelect)
+	{
+		return (OldButtons & ButtonSelect) != 0;
+	}
+
+private:
+	float Cross(const Vector2D &LHS, const Vector2D &RHS) const
+	{
+		return LHS.X*RHS.Y - LHS.Y*RHS.X;
+	}
+
+	bool Within(const Vector2D &Pos) const
+	{
+		if (Cross(CalibrationData[1] - CalibrationData[0], Pos - CalibrationData[0]) > 0.0f)
+			return false;
+		if (Cross(CalibrationData[3] - CalibrationData[1], Pos - CalibrationData[1]) > 0.0f)
+			return false;
+		if (Cross(CalibrationData[2] - CalibrationData[3], Pos - CalibrationData[3]) > 0.0f)
+			return false;
+		if (Cross(CalibrationData[0] - CalibrationData[2], Pos - CalibrationData[2]) > 0.0f)
+			return false;
+		return true;
+	}
+
+	float Remap(const Vector2D &Pos, int a, int b, int c, int d)
+	{
+		Vector2D Cal[4];
+		for (int i = 0; i < 4; i++)
+		{
+			Cal[i] = CalibrationData[i]-Pos;
+		}
+		float Qa = Cross(Cal[b]-Cal[d], Cal[c]-Cal[a]);
+		float Qb = 2.0f*Cross(Cal[b], Cal[a]);
+		Qb -= Cross(Cal[b], Cal[c]);
+		Qb -= Cross(Cal[d], Cal[a]);
+		float Qc = Cross(Cal[a], Cal[b]);
+		if (Qa == 0.0f)
+			return -Qc / Qb;
+		float Inner = Qb*Qb - 4.0f*Qa*Qc;
+		if (Inner < 0.0f)
+			return -1.0f;
+		float Root = sqrtf(Inner);
+		float Result = (-Qb + Root) / (2.0f*Qa);
+		if (Result<0.0f || Result>1.0f)
+			Result = (-Qb - Root) / (2.0f*Qa);
+		return Result;
+	}
+
+	Vector2D RemapVector(const Vector2D &Input)
+	{
+		Vector2D Result(Remap(Input,0,2,1,3), Remap(Input,0,1,2,3));
+		Result.X = (Result.X < 0.0f) ? 0.0f : (Result.X > 1.0f) ? 1.0f : Result.X;
+		Result.Y = (Result.Y < 0.0f) ? 0.0f : (Result.Y > 1.0f) ? 1.0f : Result.Y;
+		return Result;
+	}
+
+private:
+	IWiimote *Wiimote;
+	int FrameNumber;
+	int OldButtons;
+	int PlayerIdx;
+	int CalibrationPhase;
+	Vector2D CalibrationData[4];
+	bool DoneCalibration;
+};
+
 void WiimoteTask(void *pvParameters)
 {
 	printf("WiimoteTask running on core %d\n", xPortGetCoreID());
 	GWiimoteManager.Init();
-	bool ShowPointer = true;
-	bool HomeWasPressed[2] = {false, false};
-	bool ButtonPressed[2] = {false, false};
-	int FrameNumber[2]={0,0};
-	IWiimote *Player[2];
-	Player[0] = GWiimoteManager.CreateNewWiimote();
-	Player[1] = GWiimoteManager.CreateNewWiimote();
+	PlayerInput Player1(0);
+	PlayerInput Player2(1);
 	while (true)
 	{
 		GWiimoteManager.Tick();
-		for (int PlayerIdx=0; PlayerIdx<2; PlayerIdx++)
-		{
-			const WiimoteData *Data = Player[PlayerIdx]->GetData();
-			if (Data->FrameNumber != FrameNumber[PlayerIdx])
-			{
-				FrameNumber[PlayerIdx] = Data->FrameNumber;
-				bool HomePressed = (Data->Buttons & WiimoteData::kButton_Home);
-				if (HomePressed && !HomeWasPressed[PlayerIdx])
-				{
-					ShowPointer = !ShowPointer;
-					gpio_matrix_out(OUT_SCREEN_DIM, ShowPointer ? RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL : SIG_GPIO_OUT_IDX, false, false);
-					gpio_matrix_out(OUT_SCREEN_DIM_INV, ShowPointer ? RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL : SIG_GPIO_OUT_IDX, true, false);
-				}
-				HomeWasPressed[PlayerIdx] = HomePressed;
-
-				ButtonPressed[PlayerIdx] = ((Data->Buttons & (WiimoteData::kButton_B | WiimoteData::kButton_A)) != 0);
-
-				if (Data->Buttons & WiimoteData::kButton_Plus)
-					CoopMask = 0;	// Enable co-op
-
-				if (Data->Buttons & WiimoteData::kButton_Minus)
-					CoopMask = 1;	// Disable co-op
-
-				if (Data->IRSpot[0].X != 0x3FF || Data->IRSpot[0].Y != 0x3FF)
-				{
-					ReticuleXPosition[PlayerIdx] = TIMING_BACK_PORCH + (TIMING_LINE_DURATION*(1023 - Data->IRSpot[0].X)) / 1024;
-					ReticuleStartLineNum[PlayerIdx] = TIMING_BLANKED_LINES + (TIMING_VISIBLE_LINES*(Data->IRSpot[0].Y + Data->IRSpot[0].Y / 3)) / 1024;
-				}
-				else
-				{
-					ReticuleStartLineNum[PlayerIdx] = 1000; // Don't draw
-				}
-				if (PlayerIdx == 1)
-				{
-					PlayerMask = 1; // If second Wiimote connected enable two player mode
-				}
-			}
-		}
+		Player1.Tick();
+		Player2.Tick();
+		bool Player1Button = Player1.ButtonWasPressed(WiimoteData::kButton_A | WiimoteData::kButton_B);
+		bool Player2Button = Player2.ButtonWasPressed(WiimoteData::kButton_A | WiimoteData::kButton_B);
 		if (CoopMask == 0)
 		{
-			gpio_set_level(OUT_PLAYER1_TRIGGER_PULLED, ButtonPressed[0] || ButtonPressed[1]);
+			gpio_set_level(OUT_PLAYER1_TRIGGER_PULLED, Player1Button || Player2Button);
 			gpio_set_level(OUT_PLAYER2_TRIGGER_PULLED, false);
 		}
 		else
 		{
-			gpio_set_level(OUT_PLAYER1_TRIGGER_PULLED, ButtonPressed[0]);
-			gpio_set_level(OUT_PLAYER2_TRIGGER_PULLED, ButtonPressed[1]);
+			gpio_set_level(OUT_PLAYER1_TRIGGER_PULLED, Player1Button);
+			gpio_set_level(OUT_PLAYER2_TRIGGER_PULLED, Player2Button);
 		}
 		vTaskDelay(1);
 	}
@@ -189,12 +369,12 @@ void IRAM_ATTR CompositeSyncInterrupt(void* arg)
 	{
 		if ((GPIO.in & BIT(IN_VERTICAL_SYNC)) == 0)
 		{
-			int CurrentPlayer = (CurrentLine & 1)&PlayerMask;
+			int CurrentPlayer = (CurrentLine & 1) & PlayerMask;
 			int StartingLine = ReticuleStartLineNum[CurrentPlayer];
 			int XCoordinate = ReticuleXPosition[CurrentPlayer];
 			if (CurrentLine >= StartingLine && CurrentLine < StartingLine + ARRAY_NUM(ReticuleSizeLookup))
 			{
-				int OutputSelect = CurrentPlayer&CoopMask; // In co-op always output to player 1's gun otherwise select which gun to go to
+				int OutputSelect = CurrentPlayer & CoopMask; // In co-op always output to player 1's gun otherwise select which gun to go to
 				WRITE_PERI_REG(OutputSelect ? OUT_PLAYER1_LED_OUT_SELECTION_REG : OUT_PLAYER2_LED_OUT_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S)); // Keep this line high (not used)
 				WRITE_PERI_REG(OutputSelect ? OUT_PLAYER2_LED_OUT_SELECTION_REG : OUT_PLAYER1_LED_OUT_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | ((RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL) << GPIO_FUNC0_OUT_SEL_S)); // Output pulse
 				rmt_item32_t HorizontalPulse;
