@@ -113,8 +113,6 @@ public:
 			if (ButtonClicked(Data->Buttons, WiimoteData::kButton_Home))
 			{
 				ShowPointer = !ShowPointer;
-				gpio_matrix_out(OUT_SCREEN_DIM, ShowPointer ? RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL : SIG_GPIO_OUT_IDX, false, false);
-				gpio_matrix_out(OUT_SCREEN_DIM_INV, ShowPointer ? RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL : SIG_GPIO_OUT_IDX, true, false);
 			}
 
 			if (CalibrationPhase < 4 && ButtonClicked(Data->Buttons, (WiimoteData::kButton_B | WiimoteData::kButton_A)))
@@ -321,6 +319,7 @@ void WiimoteTask(void *pvParameters)
 	GWiimoteManager.Init();
 	PlayerInput Player1(0);
 	PlayerInput Player2(1);
+	bool LastLocalShowPointer=false;
 	while (true)
 	{
 		GWiimoteManager.Tick();
@@ -337,6 +336,13 @@ void WiimoteTask(void *pvParameters)
 		{
 			gpio_set_level(OUT_PLAYER1_TRIGGER_PULLED, Player1Button);
 			gpio_set_level(OUT_PLAYER2_TRIGGER_PULLED, Player2Button);
+		}
+		bool LocalShowPointer = ShowPointer || TextMode;
+		if (LocalShowPointer != LastLocalShowPointer)
+		{
+			gpio_matrix_out(OUT_SCREEN_DIM, LocalShowPointer ? RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL : SIG_GPIO_OUT_IDX, false, false);
+			gpio_matrix_out(OUT_SCREEN_DIM_INV, LocalShowPointer ? RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL : SIG_GPIO_OUT_IDX, true, false);
+			LastLocalShowPointer = LocalShowPointer;
 		}
 		if (DisplayTime > 0)
 		{
