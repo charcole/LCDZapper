@@ -2,6 +2,8 @@
 
 Device for making lightgun games playable on modern LCD TVs with original hardware. For example NES Duck Hunt but the system will work with almost all lightgun games/systems from the NES all the way up to the Dreamcast.
 
+![Picture of prototype board](https://github.com/charcole/LCDZapper/blob/master/Images/LCDZapperPro.jpg "Picture of prototype board")
+
 Version2
 --------
 
@@ -12,12 +14,12 @@ https://youtu.be/DzIPGpKo3Ag
 
 This release should be considered a beta. The functionality is there but there are hardware and firmware bugs that still need to be worked out. Hardware and firmware may also be out of sync while in this period so be cautious of that if building your own before everything is finalised. Check the open Issue for latest information.
 
-*Nb. I would like to release this as a commerical product once completed, therefore commerical use of the design/firmware is prohibited (see LICENSE.txt). Please contact me if you want to discuss commerical licensing. Hobbiest are welcome to make their own based on this design as long as it's for personal use only.*
+**Nb. I would like to release this as a commerical product once completed, therefore commerical use of the design/firmware is prohibited (see LICENSE.txt). Please contact me if you want to discuss commerical licensing. Hobbiest are welcome to make their own based on this design as long as it's for personal use only.**
 
 Usage
 -----
 
-To provide positional information a Wii Remote (Wiimote) is used. This need to be fixed to the lightgun and a Wii sensor bar set up (/Nb. sensor bar will be built into newer revisions/).
+To provide positional information a Wii Remote (Wiimote) is used. This need to be fixed to the lightgun and a Wii sensor bar set up (*Nb. sensor bar will be built into newer revisions*).
 
 To hook up the unit, composite video from the console is connected to the VIDEO_IN port, then from the VIDEO_OUT port to the TV. The device also has a USB mini port for powering the unit. The output is an LED on a length of wire that needs to be fixed in the barrel of the lightgun (blu-tak works well).
 
