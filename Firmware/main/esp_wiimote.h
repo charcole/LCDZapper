@@ -1,3 +1,18 @@
+// (c) Charlie Cole 2017
+//
+// This is licensed under
+// - Creative Commons Attribution-NonCommercial 3.0 Unported
+// - https://creativecommons.org/licenses/by-nc/3.0/
+// - Or see LICENSE.txt
+//
+// The short of it is...
+//   You are free to:
+//     Share — copy and redistribute the material in any medium or format
+//     Adapt — remix, transform, and build upon the material
+//   Under the following terms:
+//     NonCommercial — You may not use the material for commercial purposes.
+//     Attribution — You must give appropriate credit, provide a link to the license, and indicate if changes were made. You may do so in any reasonable manner, but not in any way that suggests the licensor endorses you or your use.
+
 #ifndef __ESP_WIIMOTE_H__
 #define __ESP_WIIMOTE_H__
 
