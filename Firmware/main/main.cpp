@@ -22,6 +22,7 @@ extern "C"
 #include "driver/uart.h"
 #include "driver/gpio.h"
 #include "driver/rmt.h"
+#include "driver/timer.h"
 #include "nvs_flash.h"
 };
 #include "esp_wiimote.h"
@@ -36,7 +37,6 @@ extern "C"
 #define OUT_PLAYER2_TRIGGER_PULLED (GPIO_NUM_14) // Used for Wiimote-only operation
 
 #define IN_COMPOSITE_SYNC (GPIO_NUM_19) // Compsite sync input (If changed change also in asm loop)
-#define IN_VERTICAL_SYNC (GPIO_NUM_18) // Vertical sync input
 
 #define RMT_SCREEN_DIM_CHANNEL    RMT_CHANNEL_1     /*!< RMT channel for transmitter */
 
@@ -46,7 +46,8 @@ extern "C"
 #define TIMING_LINE_DURATION  8*465 // In 80ths of a microsecond  (Should be about 52*80 but need to clip when off edge)
 #define TIMING_BLANKED_LINES 24		// Should be about 16?
 #define TIMING_VISIBLE_LINES 250	// Should be 288
-#define TEXT_PIXEL_VERTICAL_SIZE 16
+#define TIMING_VSYNC_THRESHOLD (80*16) // If sync is longer than this then doing a vertical sync
+#define TEXT_PIXEL_VERTICAL_SIZE 16 // Should be power of 2 for speed reasons
 #define TEXT_START_LINE 105
 #define TEXT_NUM_LINES 5
 #define TEXT_END_LINE (TEXT_START_LINE + TEXT_PIXEL_VERTICAL_SIZE*TEXT_NUM_LINES)
@@ -445,70 +446,63 @@ SPINLOOP:   l32i.n %0, %1, 0;\
 
 void IRAM_ATTR CompositeSyncPositiveEdge(void)
 {
-	if ((GPIO.in & BIT(IN_VERTICAL_SYNC)) == 0)
+	bool Active = false;
+	int CurrentPlayer = (CurrentLine & 1) & PlayerMask;
+	int StartingLine = ReticuleStartLineNum[CurrentPlayer];
+	int XCoordinate = ReticuleXPosition[CurrentPlayer];
+	rmt_item32_t EndTerminator;
+	EndTerminator.level0 = 1;
+	EndTerminator.duration0 = 0;
+	EndTerminator.level1 = 1;
+	EndTerminator.duration1 = 0;
+	if (CurrentLine >= StartingLine && CurrentLine < StartingLine + ARRAY_NUM(ReticuleSizeLookup))
 	{
-		bool Active = false;
-		int CurrentPlayer = (CurrentLine & 1) & PlayerMask;
-		int StartingLine = ReticuleStartLineNum[CurrentPlayer];
-		int XCoordinate = ReticuleXPosition[CurrentPlayer];
-		rmt_item32_t EndTerminator;
-		EndTerminator.level0 = 1;
-		EndTerminator.duration0 = 0;
-		EndTerminator.level1 = 1;
-		EndTerminator.duration1 = 0;
-		if (CurrentLine >= StartingLine && CurrentLine < StartingLine + ARRAY_NUM(ReticuleSizeLookup))
+		int OutputSelect = CurrentPlayer & CoopMask; // In co-op always output to player 1's gun otherwise select which gun to go to
+		WRITE_PERI_REG(OutputSelect ? OUT_PLAYER1_LED_OUT_SELECTION_REG : OUT_PLAYER2_LED_OUT_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S)); // Keep this line high (not used)
+		WRITE_PERI_REG(OutputSelect ? OUT_PLAYER2_LED_OUT_SELECTION_REG : OUT_PLAYER1_LED_OUT_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | ((RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL) << GPIO_FUNC0_OUT_SEL_S)); // Output pulse
+		rmt_item32_t HorizontalPulse;
+		HorizontalPulse.level0 = 1;
+		HorizontalPulse.duration0 = XCoordinate - ReticuleSizeLookup[CurrentLine - StartingLine];
+		HorizontalPulse.level1 = 0;
+		HorizontalPulse.duration1 = 2 * ReticuleSizeLookup[CurrentLine - StartingLine];
+		RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[0].val = HorizontalPulse.val;
+		RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[1].val = EndTerminator.val;
+		Active = true;
+	}
+	else if (TextMode && CurrentLine >= TEXT_START_LINE && CurrentLine < TEXT_END_LINE)
+	{
+		WRITE_PERI_REG(OUT_PLAYER1_LED_OUT_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S)); // Keep this line high (not used)
+		WRITE_PERI_REG(OUT_PLAYER2_LED_OUT_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S)); // Keep this line high (not used)
+		uint16_t *Text = DisplayText;
+		if (Text)
 		{
-			int OutputSelect = CurrentPlayer & CoopMask; // In co-op always output to player 1's gun otherwise select which gun to go to
-			WRITE_PERI_REG(OutputSelect ? OUT_PLAYER1_LED_OUT_SELECTION_REG : OUT_PLAYER2_LED_OUT_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S)); // Keep this line high (not used)
-			WRITE_PERI_REG(OutputSelect ? OUT_PLAYER2_LED_OUT_SELECTION_REG : OUT_PLAYER1_LED_OUT_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | ((RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL) << GPIO_FUNC0_OUT_SEL_S)); // Output pulse
+			uint16_t Line = Text[(CurrentLine - TEXT_START_LINE) / TEXT_PIXEL_VERTICAL_SIZE];
+			uint16_t Mask = 1;
 			rmt_item32_t HorizontalPulse;
 			HorizontalPulse.level0 = 1;
-			HorizontalPulse.duration0 = XCoordinate - ReticuleSizeLookup[CurrentLine - StartingLine];
-			HorizontalPulse.level1 = 0;
-			HorizontalPulse.duration1 = 2 * ReticuleSizeLookup[CurrentLine - StartingLine];
+			HorizontalPulse.duration0 = TIMING_BACK_PORCH;
+			HorizontalPulse.level1 = 1;
+			HorizontalPulse.duration1 = TEXT_HORIZONTAL_OFFSET;
 			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[0].val = HorizontalPulse.val;
-			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[1].val = EndTerminator.val;
+			for (int i = 0; i < 6; i++)
+			{
+				HorizontalPulse.level0 = (Line & Mask) ? 0 : 1;
+				HorizontalPulse.duration0 = TEXT_PIXEL_HORIZONTAL_SIZE;
+				Mask <<= 1;
+				HorizontalPulse.level1 = (Line & Mask) ? 0 : 1;
+				HorizontalPulse.duration1 = TEXT_PIXEL_HORIZONTAL_SIZE;
+				Mask <<= 1;
+				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[i+1].val = HorizontalPulse.val;
+			}
+			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[7].val = EndTerminator.val;
 			Active = true;
 		}
-		else if (TextMode && CurrentLine >= TEXT_START_LINE && CurrentLine < TEXT_END_LINE)
-		{
-			WRITE_PERI_REG(OUT_PLAYER1_LED_OUT_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S)); // Keep this line high (not used)
-			WRITE_PERI_REG(OUT_PLAYER2_LED_OUT_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S)); // Keep this line high (not used)
-			uint16_t *Text = DisplayText;
-			if (Text)
-			{
-				uint16_t Line = Text[(CurrentLine - TEXT_START_LINE) / TEXT_PIXEL_VERTICAL_SIZE];
-				uint16_t Mask = 1;
-				rmt_item32_t HorizontalPulse;
-				HorizontalPulse.level0 = 1;
-				HorizontalPulse.duration0 = TIMING_BACK_PORCH;
-				HorizontalPulse.level1 = 1;
-				HorizontalPulse.duration1 = TEXT_HORIZONTAL_OFFSET;
-				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[0].val = HorizontalPulse.val;
-				for (int i = 0; i < 6; i++)
-				{
-					HorizontalPulse.level0 = (Line & Mask) ? 0 : 1;
-					HorizontalPulse.duration0 = TEXT_PIXEL_HORIZONTAL_SIZE;
-					Mask <<= 1;
-					HorizontalPulse.level1 = (Line & Mask) ? 0 : 1;
-					HorizontalPulse.duration1 = TEXT_PIXEL_HORIZONTAL_SIZE;
-					Mask <<= 1;
-					RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[i+1].val = HorizontalPulse.val;
-				}
-				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[7].val = EndTerminator.val;
-				Active = true;
-			}
-		}
-		if (Active)
-		{
-			ActivateRMTOnSyncFallingEdge();
-		}
-		CurrentLine++;
 	}
-	else
+	if (Active)
 	{
-		CurrentLine = 0;
+		ActivateRMTOnSyncFallingEdge();
 	}
+	CurrentLine++;
 }
 
 void SpotGeneratorTask(void *pvParameters)
@@ -516,8 +510,6 @@ void SpotGeneratorTask(void *pvParameters)
 	printf("SpotGeneratorTask starting on core %d\n", xPortGetCoreID());
 
 	ESP_ERROR_CHECK(gpio_set_direction(IN_COMPOSITE_SYNC, GPIO_MODE_INPUT));
-	ESP_ERROR_CHECK(gpio_set_direction(IN_VERTICAL_SYNC, GPIO_MODE_INPUT));
-	ESP_ERROR_CHECK(gpio_set_direction(GPIO_NUM_21, GPIO_MODE_OUTPUT));
 
 	int ReticuleNumLines = ARRAY_NUM(ReticuleSizeLookup);
 	float ReticuleHalfSize = ReticuleNumLines / 2.0f;
@@ -545,13 +537,35 @@ void SpotGeneratorTask(void *pvParameters)
 	CSyncGPIOConfig.pull_down_en = GPIO_PULLDOWN_DISABLE;
 	gpio_config(&CSyncGPIOConfig);
 
+    timer_group_t timer_group = TIMER_GROUP_1;
+    timer_idx_t timer_idx = TIMER_1;
+    timer_config_t config;
+    config.alarm_en = TIMER_ALARM_DIS;
+    config.auto_reload = TIMER_AUTORELOAD_DIS;
+    config.counter_dir = TIMER_COUNT_UP;
+    config.divider = 1;
+    config.intr_type = TIMER_INTR_LEVEL;
+    config.counter_en = TIMER_START;
+    timer_init(timer_group, timer_idx, &config);
+	timer_set_counter_value(timer_group, timer_idx, 0ULL);
+
 	vTaskEndScheduler(); // Disable FreeRTOS on this core as we don't need it anymore 
 
 	while (true)
 	{
-		while (gpio_get_level(IN_COMPOSITE_SYNC) == 1);
-		while (gpio_get_level(IN_COMPOSITE_SYNC) == 0);
-		CompositeSyncPositiveEdge();
+		TIMERG1.hw_timer[timer_idx].reload = 1;
+		while ((GPIO.in & BIT(IN_COMPOSITE_SYNC)) != 0); // while sync is still happening
+		TIMERG1.hw_timer[timer_idx].update = 1;
+		uint32_t Time = 2*TIMERG1.hw_timer[timer_idx].cnt_low; // timer's clk is half what I expect hence 2x
+		while ((GPIO.in & BIT(IN_COMPOSITE_SYNC)) == 0); // while not sync
+		if (Time > TIMING_VSYNC_THRESHOLD)
+		{
+			CurrentLine = 0;
+		}
+		else
+		{
+			CompositeSyncPositiveEdge();
+		}
 	}
 }
 
