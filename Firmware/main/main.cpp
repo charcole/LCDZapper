@@ -26,6 +26,7 @@ extern "C"
 #include "nvs_flash.h"
 };
 #include "esp_wiimote.h"
+#include "images.h"
 
 #define OUT_SCREEN_DIM  (GPIO_NUM_16) // Controls drawing spot on screen
 #define OUT_SCREEN_DIM_INV (GPIO_NUM_21) // Inverted version of above
@@ -47,28 +48,17 @@ extern "C"
 #define TIMING_BLANKED_LINES 24		// Should be about 16?
 #define TIMING_VISIBLE_LINES 250	// Should be 288
 #define TIMING_VSYNC_THRESHOLD (80*16) // If sync is longer than this then doing a vertical sync
-#define TEXT_PIXEL_VERTICAL_SIZE 16 // Should be power of 2 for speed reasons
 #define TEXT_START_LINE 105
-#define TEXT_NUM_LINES 5
-#define TEXT_END_LINE (TEXT_START_LINE + TEXT_PIXEL_VERTICAL_SIZE*TEXT_NUM_LINES)
-#define TEXT_PIXEL_HORIZONTAL_SIZE (TIMING_LINE_DURATION / 24)
-#define TEXT_HORIZONTAL_OFFSET (6*TEXT_PIXEL_HORIZONTAL_SIZE)
+#define TEXT_END_LINE (TEXT_START_LINE + 80)
+#define LOGO_START_LINE (TIMING_BLANKED_LINES + 25)
+#define LOGO_END_LINE (LOGO_START_LINE + 200)
 
 #define ARRAY_NUM(x) (sizeof(x)/sizeof(x[0]))
 
-static uint16_t OneAndTwoText[TEXT_NUM_LINES] = { 0x602, 0x923, 0x472, 0x222, 0xF07 };
-static uint16_t CalibrateText[4][TEXT_NUM_LINES] =
-{
-	{0x407, 0xA43, 0xEE5, 0xA48, 0xA00},	// Up left
-	{0x40E, 0xA4C, 0xEEA, 0xA41, 0xA00},	// Up right
-	{0x400, 0xA48, 0xEE5, 0xA43, 0xA07},	// Down left
-	{0x400, 0xA41, 0xEEA, 0xA4C, 0xA0E}	    // Down right
-};
-static uint16_t CoopText[TEXT_NUM_LINES] = { 0xF93, 0x029, 0xC93, 0xD40, 0x49F };
-static uint16_t DuelText[TEXT_NUM_LINES] = { 0x5AA, 0x4AA, 0x5AB, 0x4AB, 0xDBB };
-
+static bool LogoMode = true;
 static bool TextMode = true;
-static uint16_t *DisplayText = OneAndTwoText;
+static uint32_t *ImageData = &ImagePress12[0][0];
+static int LogoTime = 4000;
 static int DisplayTime = 0;
 static bool ShowPointer = true;
 static bool DoingCalibration = false;
@@ -77,7 +67,7 @@ static int PlayerMask = 0; // Set to 1 for two player
 static int CoopMask = 1; // Set to 0 for co-op play
 static int ReticuleStartLineNum[2] = { 1000,1000 };
 static int ReticuleXPosition[2] = { 320,320 };
-static int ReticuleSizeLookup[14];
+static int ReticuleSizeLookup[2][14];
 
 class PlayerInput
 {
@@ -148,7 +138,7 @@ public:
 				if (!DoingCalibration && (Data->Buttons & WiimoteData::kButton_Plus))
 				{
 					CoopMask = 0;	// Enable co-op
-					DisplayText = CoopText;
+					ImageData = &ImageCoop[0][0];
 					DisplayTime = 1500;
 					TextMode = true;
 				}
@@ -156,7 +146,7 @@ public:
 				if (!DoingCalibration && (Data->Buttons & WiimoteData::kButton_Minus))
 				{
 					CoopMask = 1;	// Disable co-op
-					DisplayText = DuelText;
+					ImageData = &ImageDual[0][0];
 					DisplayTime = 1500;
 					TextMode = true;
 				}
@@ -182,7 +172,7 @@ public:
 
 			if (CalibrationPhase < 4)
 			{
-				DisplayText = CalibrateText[CalibrationPhase];
+				ImageData = &ImageAim[0][0];
 				TextMode = true;
 				switch (CalibrationPhase)
 				{
@@ -244,7 +234,7 @@ public:
 
 			if (TextMode)
 			{
-				if (DisplayText == OneAndTwoText)
+				if (ImageData == &ImagePress12[0][0])
 				{
 					TextMode = false;	// Turn off sync message once connected
 				}
@@ -353,7 +343,7 @@ void WiimoteTask(void *pvParameters)
 			gpio_set_level(OUT_PLAYER1_TRIGGER_PULLED, Player1Button);
 			gpio_set_level(OUT_PLAYER2_TRIGGER_PULLED, Player2Button);
 		}
-		bool LocalShowPointer = ShowPointer || TextMode;
+		bool LocalShowPointer = ShowPointer || TextMode || LogoMode;
 		if (LocalShowPointer != LastLocalShowPointer)
 		{
 			gpio_matrix_out(OUT_SCREEN_DIM, LocalShowPointer ? RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL : SIG_GPIO_OUT_IDX, false, false);
@@ -364,6 +354,11 @@ void WiimoteTask(void *pvParameters)
 		{
 			DisplayTime--;
 		}
+		if (LogoTime > 0)
+		{
+			LogoTime--;
+		}
+		LogoMode = (LogoTime > 0);
 		vTaskDelay(1);
 	}
 }
@@ -455,48 +450,43 @@ void IRAM_ATTR CompositeSyncPositiveEdge(void)
 	EndTerminator.duration0 = 0;
 	EndTerminator.level1 = 1;
 	EndTerminator.duration1 = 0;
-	if (CurrentLine >= StartingLine && CurrentLine < StartingLine + ARRAY_NUM(ReticuleSizeLookup))
+	if (LogoMode && CurrentLine >= LOGO_START_LINE && CurrentLine < LOGO_END_LINE)
 	{
-		int OutputSelect = CurrentPlayer & CoopMask; // In co-op always output to player 1's gun otherwise select which gun to go to
-		WRITE_PERI_REG(OutputSelect ? OUT_PLAYER1_LED_OUT_SELECTION_REG : OUT_PLAYER2_LED_OUT_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S)); // Keep this line high (not used)
-		WRITE_PERI_REG(OutputSelect ? OUT_PLAYER2_LED_OUT_SELECTION_REG : OUT_PLAYER1_LED_OUT_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | ((RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL) << GPIO_FUNC0_OUT_SEL_S)); // Output pulse
-		rmt_item32_t HorizontalPulse;
-		HorizontalPulse.level0 = 1;
-		HorizontalPulse.duration0 = XCoordinate - ReticuleSizeLookup[CurrentLine - StartingLine];
-		HorizontalPulse.level1 = 0;
-		HorizontalPulse.duration1 = 2 * ReticuleSizeLookup[CurrentLine - StartingLine];
-		RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[0].val = HorizontalPulse.val;
-		RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[1].val = EndTerminator.val;
+		WRITE_PERI_REG(OUT_PLAYER1_LED_OUT_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S)); // Keep this line high (not used)
+		WRITE_PERI_REG(OUT_PLAYER2_LED_OUT_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S)); // Keep this line high (not used)
+		int LineIdx = CurrentLine - LOGO_START_LINE;
+		for (int i = 0; i < 8; i++)
+		{
+			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[i].val = ImageLogo[LineIdx][i];
+		}
+		RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[8].val = EndTerminator.val;
 		Active = true;
 	}
 	else if (TextMode && CurrentLine >= TEXT_START_LINE && CurrentLine < TEXT_END_LINE)
 	{
 		WRITE_PERI_REG(OUT_PLAYER1_LED_OUT_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S)); // Keep this line high (not used)
 		WRITE_PERI_REG(OUT_PLAYER2_LED_OUT_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S)); // Keep this line high (not used)
-		uint16_t *Text = DisplayText;
-		if (Text)
+		int LineIdx = CurrentLine - TEXT_START_LINE;
+		for (int i = 0; i < 8; i++)
 		{
-			uint16_t Line = Text[(CurrentLine - TEXT_START_LINE) / TEXT_PIXEL_VERTICAL_SIZE];
-			uint16_t Mask = 1;
-			rmt_item32_t HorizontalPulse;
-			HorizontalPulse.level0 = 1;
-			HorizontalPulse.duration0 = TIMING_BACK_PORCH;
-			HorizontalPulse.level1 = 1;
-			HorizontalPulse.duration1 = TEXT_HORIZONTAL_OFFSET;
-			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[0].val = HorizontalPulse.val;
-			for (int i = 0; i < 6; i++)
-			{
-				HorizontalPulse.level0 = (Line & Mask) ? 0 : 1;
-				HorizontalPulse.duration0 = TEXT_PIXEL_HORIZONTAL_SIZE;
-				Mask <<= 1;
-				HorizontalPulse.level1 = (Line & Mask) ? 0 : 1;
-				HorizontalPulse.duration1 = TEXT_PIXEL_HORIZONTAL_SIZE;
-				Mask <<= 1;
-				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[i+1].val = HorizontalPulse.val;
-			}
-			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[7].val = EndTerminator.val;
-			Active = true;
+			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[i].val = ImageData[8*LineIdx + i];
 		}
+		RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[8].val = EndTerminator.val;
+		Active = true;
+	}
+	else if (CurrentLine >= StartingLine && CurrentLine < StartingLine + ARRAY_NUM(ReticuleSizeLookup[0]))
+	{
+		int OutputSelect = CurrentPlayer & CoopMask; // In co-op always output to player 1's gun otherwise select which gun to go to
+		WRITE_PERI_REG(OutputSelect ? OUT_PLAYER1_LED_OUT_SELECTION_REG : OUT_PLAYER2_LED_OUT_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S)); // Keep this line high (not used)
+		WRITE_PERI_REG(OutputSelect ? OUT_PLAYER2_LED_OUT_SELECTION_REG : OUT_PLAYER1_LED_OUT_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | ((RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL) << GPIO_FUNC0_OUT_SEL_S)); // Output pulse
+		rmt_item32_t HorizontalPulse;
+		HorizontalPulse.level0 = 1;
+		HorizontalPulse.duration0 = XCoordinate - ReticuleSizeLookup[CurrentPlayer][CurrentLine - StartingLine];
+		HorizontalPulse.level1 = 0;
+		HorizontalPulse.duration1 = 2 * ReticuleSizeLookup[CurrentPlayer][CurrentLine - StartingLine];
+		RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[0].val = HorizontalPulse.val;
+		RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[1].val = EndTerminator.val;
+		Active = true;
 	}
 	if (Active)
 	{
@@ -511,14 +501,16 @@ void SpotGeneratorTask(void *pvParameters)
 
 	ESP_ERROR_CHECK(gpio_set_direction(IN_COMPOSITE_SYNC, GPIO_MODE_INPUT));
 
-	int ReticuleNumLines = ARRAY_NUM(ReticuleSizeLookup);
+	int ReticuleNumLines = ARRAY_NUM(ReticuleSizeLookup[0]);
 	float ReticuleHalfSize = ReticuleNumLines / 2.0f;
 	float ReticuleMiddle = (ReticuleNumLines - 1) / 2.0f;
 	for (int i = 0; i < ReticuleNumLines; i++)
 	{
 		float y = (i - ReticuleMiddle) / ReticuleHalfSize;
 		float x = sqrtf(1.0f - y*y);
-		ReticuleSizeLookup[i] = TIMING_RETICULE_WIDTH*x;
+		ReticuleSizeLookup[0][i] = TIMING_RETICULE_WIDTH*x;
+		x = 1.0f - fabsf(y);
+		ReticuleSizeLookup[1][i] = TIMING_RETICULE_WIDTH*x;
 	}
 
 	RMTPeripheralInit();
