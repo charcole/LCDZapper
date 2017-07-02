@@ -443,91 +443,72 @@ SPINLOOP:   l32i.n %0, %1, 0;\
 			);
 }
 
-void IRAM_ATTR CompositeSyncInterrupt(void* arg)
+void IRAM_ATTR CompositeSyncPositiveEdge(void)
 {
-	if (GPIO.status & BIT(IN_COMPOSITE_SYNC)) // Check composite sync caused interrupt
+	if ((GPIO.in & BIT(IN_VERTICAL_SYNC)) == 0)
 	{
-		if ((GPIO.in & BIT(IN_VERTICAL_SYNC)) == 0)
+		bool Active = false;
+		int CurrentPlayer = (CurrentLine & 1) & PlayerMask;
+		int StartingLine = ReticuleStartLineNum[CurrentPlayer];
+		int XCoordinate = ReticuleXPosition[CurrentPlayer];
+		rmt_item32_t EndTerminator;
+		EndTerminator.level0 = 1;
+		EndTerminator.duration0 = 0;
+		EndTerminator.level1 = 1;
+		EndTerminator.duration1 = 0;
+		if (CurrentLine >= StartingLine && CurrentLine < StartingLine + ARRAY_NUM(ReticuleSizeLookup))
 		{
-			bool Active = false;
-			int CurrentPlayer = (CurrentLine & 1) & PlayerMask;
-			int StartingLine = ReticuleStartLineNum[CurrentPlayer];
-			int XCoordinate = ReticuleXPosition[CurrentPlayer];
-			if (CurrentLine >= StartingLine && CurrentLine < StartingLine + ARRAY_NUM(ReticuleSizeLookup))
+			int OutputSelect = CurrentPlayer & CoopMask; // In co-op always output to player 1's gun otherwise select which gun to go to
+			WRITE_PERI_REG(OutputSelect ? OUT_PLAYER1_LED_OUT_SELECTION_REG : OUT_PLAYER2_LED_OUT_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S)); // Keep this line high (not used)
+			WRITE_PERI_REG(OutputSelect ? OUT_PLAYER2_LED_OUT_SELECTION_REG : OUT_PLAYER1_LED_OUT_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | ((RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL) << GPIO_FUNC0_OUT_SEL_S)); // Output pulse
+			rmt_item32_t HorizontalPulse;
+			HorizontalPulse.level0 = 1;
+			HorizontalPulse.duration0 = XCoordinate - ReticuleSizeLookup[CurrentLine - StartingLine];
+			HorizontalPulse.level1 = 0;
+			HorizontalPulse.duration1 = 2 * ReticuleSizeLookup[CurrentLine - StartingLine];
+			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[0].val = HorizontalPulse.val;
+			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[1].val = EndTerminator.val;
+			Active = true;
+		}
+		else if (TextMode && CurrentLine >= TEXT_START_LINE && CurrentLine < TEXT_END_LINE)
+		{
+			WRITE_PERI_REG(OUT_PLAYER1_LED_OUT_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S)); // Keep this line high (not used)
+			WRITE_PERI_REG(OUT_PLAYER2_LED_OUT_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S)); // Keep this line high (not used)
+			uint16_t *Text = DisplayText;
+			if (Text)
 			{
-				int OutputSelect = CurrentPlayer & CoopMask; // In co-op always output to player 1's gun otherwise select which gun to go to
-				WRITE_PERI_REG(OutputSelect ? OUT_PLAYER1_LED_OUT_SELECTION_REG : OUT_PLAYER2_LED_OUT_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S)); // Keep this line high (not used)
-				WRITE_PERI_REG(OutputSelect ? OUT_PLAYER2_LED_OUT_SELECTION_REG : OUT_PLAYER1_LED_OUT_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | ((RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL) << GPIO_FUNC0_OUT_SEL_S)); // Output pulse
+				uint16_t Line = Text[(CurrentLine - TEXT_START_LINE) / TEXT_PIXEL_VERTICAL_SIZE];
+				uint16_t Mask = 1;
 				rmt_item32_t HorizontalPulse;
 				HorizontalPulse.level0 = 1;
-				HorizontalPulse.duration0 = XCoordinate - ReticuleSizeLookup[CurrentLine - StartingLine];
-				HorizontalPulse.level1 = 0;
-				HorizontalPulse.duration1 = 2 * ReticuleSizeLookup[CurrentLine - StartingLine];
+				HorizontalPulse.duration0 = TIMING_BACK_PORCH;
+				HorizontalPulse.level1 = 1;
+				HorizontalPulse.duration1 = TEXT_HORIZONTAL_OFFSET;
 				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[0].val = HorizontalPulse.val;
-				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[1].val = 0;
+				for (int i = 0; i < 6; i++)
+				{
+					HorizontalPulse.level0 = (Line & Mask) ? 0 : 1;
+					HorizontalPulse.duration0 = TEXT_PIXEL_HORIZONTAL_SIZE;
+					Mask <<= 1;
+					HorizontalPulse.level1 = (Line & Mask) ? 0 : 1;
+					HorizontalPulse.duration1 = TEXT_PIXEL_HORIZONTAL_SIZE;
+					Mask <<= 1;
+					RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[i+1].val = HorizontalPulse.val;
+				}
+				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[7].val = EndTerminator.val;
 				Active = true;
 			}
-			else if (TextMode && CurrentLine >= TEXT_START_LINE && CurrentLine < TEXT_END_LINE)
-			{
-				WRITE_PERI_REG(OUT_PLAYER1_LED_OUT_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S)); // Keep this line high (not used)
-				WRITE_PERI_REG(OUT_PLAYER2_LED_OUT_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S)); // Keep this line high (not used)
-				uint16_t *Text = DisplayText;
-				if (Text)
-				{
-					uint16_t Line = Text[(CurrentLine - TEXT_START_LINE) / TEXT_PIXEL_VERTICAL_SIZE];
-					uint16_t Mask = 1;
-					rmt_item32_t HorizontalPulse;
-					HorizontalPulse.level0 = 1;
-					HorizontalPulse.duration0 = TIMING_BACK_PORCH;
-					HorizontalPulse.level1 = 1;
-					HorizontalPulse.duration1 = TEXT_HORIZONTAL_OFFSET;
-					RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[0].val = HorizontalPulse.val;
-					for (int i = 0; i < 6; i++)
-					{
-						HorizontalPulse.level0 = (Line & Mask) ? 0 : 1;
-						HorizontalPulse.duration0 = TEXT_PIXEL_HORIZONTAL_SIZE;
-						Mask <<= 1;
-						HorizontalPulse.level1 = (Line & Mask) ? 0 : 1;
-						HorizontalPulse.duration1 = TEXT_PIXEL_HORIZONTAL_SIZE;
-						Mask <<= 1;
-						RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[i+1].val = HorizontalPulse.val;
-					}
-					HorizontalPulse.level0 = 1;
-					HorizontalPulse.duration0 = 0;
-					HorizontalPulse.level1 = 1;
-					HorizontalPulse.duration1 = 0;
-					RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL].data32[7].val = HorizontalPulse.val;
-					Active = true;
-				}
-			}
-			if (Active)
-			{
-				ActivateRMTOnSyncFallingEdge();
-			}
-			CurrentLine++;
 		}
-		else
+		if (Active)
 		{
-			CurrentLine = 0;
+			ActivateRMTOnSyncFallingEdge();
 		}
+		CurrentLine++;
 	}
-	// Acknowledge we handled it
-	GPIO.status_w1tc = ~0;
-	GPIO.status1_w1tc.intr_st = 0xFF;
-}
-
-void SetupCompositeSyncInterrupt()
-{
-	intr_handle_t Handle;
-	esp_intr_alloc(ETS_GPIO_INTR_SOURCE, ESP_INTR_FLAG_LEVEL3 | ESP_INTR_FLAG_EDGE, CompositeSyncInterrupt, NULL, &Handle);
-
-	gpio_config_t CSyncGPIOConfig;
-	CSyncGPIOConfig.intr_type = GPIO_INTR_POSEDGE;
-	CSyncGPIOConfig.pin_bit_mask = BIT(IN_COMPOSITE_SYNC);
-	CSyncGPIOConfig.mode = GPIO_MODE_INPUT;
-	CSyncGPIOConfig.pull_up_en = GPIO_PULLUP_DISABLE;
-	CSyncGPIOConfig.pull_down_en = GPIO_PULLDOWN_DISABLE;
-	gpio_config(&CSyncGPIOConfig);
+	else
+	{
+		CurrentLine = 0;
+	}
 }
 
 void SpotGeneratorTask(void *pvParameters)
@@ -556,12 +537,21 @@ void SpotGeneratorTask(void *pvParameters)
 	RMTInitialValues[0].duration1 = 1;
 	rmt_write_items(RMT_SCREEN_DIM_CHANNEL, RMTInitialValues, 1, false);	// Prime the RMT
 
-	SetupCompositeSyncInterrupt();
+	gpio_config_t CSyncGPIOConfig;
+	CSyncGPIOConfig.intr_type = GPIO_INTR_DISABLE;
+	CSyncGPIOConfig.pin_bit_mask = BIT(IN_COMPOSITE_SYNC);
+	CSyncGPIOConfig.mode = GPIO_MODE_INPUT;
+	CSyncGPIOConfig.pull_up_en = GPIO_PULLUP_DISABLE;
+	CSyncGPIOConfig.pull_down_en = GPIO_PULLDOWN_DISABLE;
+	gpio_config(&CSyncGPIOConfig);
+
+	vTaskEndScheduler(); // Disable FreeRTOS on this core as we don't need it anymore 
 
 	while (true)
 	{
-		// Now running completely on interrupts but might be better to spin in here but I think this caused problems for Bluetooth
-		vTaskDelay(1);
+		while (gpio_get_level(IN_COMPOSITE_SYNC) == 1);
+		while (gpio_get_level(IN_COMPOSITE_SYNC) == 0);
+		CompositeSyncPositiveEdge();
 	}
 }
 
