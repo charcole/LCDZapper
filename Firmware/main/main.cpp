@@ -537,16 +537,16 @@ void SpotGeneratorTask(void *pvParameters)
 	CSyncGPIOConfig.pull_down_en = GPIO_PULLDOWN_DISABLE;
 	gpio_config(&CSyncGPIOConfig);
 
-    timer_group_t timer_group = TIMER_GROUP_1;
-    timer_idx_t timer_idx = TIMER_1;
-    timer_config_t config;
-    config.alarm_en = TIMER_ALARM_DIS;
-    config.auto_reload = TIMER_AUTORELOAD_DIS;
-    config.counter_dir = TIMER_COUNT_UP;
-    config.divider = 1;
-    config.intr_type = TIMER_INTR_LEVEL;
-    config.counter_en = TIMER_START;
-    timer_init(timer_group, timer_idx, &config);
+	timer_group_t timer_group = TIMER_GROUP_1;
+	timer_idx_t timer_idx = TIMER_1;
+	timer_config_t config;
+	config.alarm_en = TIMER_ALARM_DIS;
+	config.auto_reload = TIMER_AUTORELOAD_DIS;
+	config.counter_dir = TIMER_COUNT_UP;
+	config.divider = 1;
+	config.intr_type = TIMER_INTR_LEVEL;
+	config.counter_en = TIMER_START;
+	timer_init(timer_group, timer_idx, &config);
 	timer_set_counter_value(timer_group, timer_idx, 0ULL);
 
 	vTaskEndScheduler(); // Disable FreeRTOS on this core as we don't need it anymore 
