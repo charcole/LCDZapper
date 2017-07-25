@@ -495,6 +495,28 @@ void IRAM_ATTR CompositeSyncPositiveEdge(void)
 	CurrentLine++;
 }
 
+void IRAM_ATTR SpotGeneratorInnerLoop()
+{
+	timer_idx_t timer_idx = TIMER_1;
+	while (true)
+	{
+		TIMERG1.hw_timer[timer_idx].reload = 1;
+		while ((GPIO.in & BIT(IN_COMPOSITE_SYNC)) != 0); // while sync is still happening
+		TIMERG1.hw_timer[timer_idx].update = 1;
+		// Don't really need the 64-bit time but only reading cnt_low seems to caused it to sometimes not update. Adding some nops also worked but not as reliably as this
+		uint64_t Time = 2*((TIMERG1.hw_timer[timer_idx].cnt_high<<32) | TIMERG1.hw_timer[timer_idx].cnt_low); // Timer's clk is half APB hence 2x.
+		while ((GPIO.in & BIT(IN_COMPOSITE_SYNC)) == 0); // while not sync
+		if (Time > TIMING_VSYNC_THRESHOLD)
+		{
+			CurrentLine = 0;
+		}
+		else
+		{
+			CompositeSyncPositiveEdge();
+		}
+	}
+}
+
 void SpotGeneratorTask(void *pvParameters)
 {
 	printf("SpotGeneratorTask starting on core %d\n", xPortGetCoreID());
@@ -541,24 +563,9 @@ void SpotGeneratorTask(void *pvParameters)
 	timer_init(timer_group, timer_idx, &config);
 	timer_set_counter_value(timer_group, timer_idx, 0ULL);
 
-	vTaskEndScheduler(); // Disable FreeRTOS on this core as we don't need it anymore 
+	vTaskEndScheduler(); // Disable FreeRTOS on this core as we don't need it anymore
 
-	while (true)
-	{
-		TIMERG1.hw_timer[timer_idx].reload = 1;
-		while ((GPIO.in & BIT(IN_COMPOSITE_SYNC)) != 0); // while sync is still happening
-		TIMERG1.hw_timer[timer_idx].update = 1;
-		uint32_t Time = 2*TIMERG1.hw_timer[timer_idx].cnt_low; // timer's clk is half what I expect hence 2x
-		while ((GPIO.in & BIT(IN_COMPOSITE_SYNC)) == 0); // while not sync
-		if (Time > TIMING_VSYNC_THRESHOLD)
-		{
-			CurrentLine = 0;
-		}
-		else
-		{
-			CompositeSyncPositiveEdge();
-		}
-	}
+	SpotGeneratorInnerLoop();
 }
 
 void InitializeMiscGPIO()
