@@ -1,4 +1,4 @@
-update=Thursday, 06 April 2017 'pmt' 20:25:10
+update=Thursday, 10 August 2017 'amt' 08:20:13
 version=1
 last_client=kicad
 [pcbnew]
@@ -60,3 +60,6 @@ LibName28=contrib
 LibName29=valves
 LibName30=/Users/charlie/Documents/Kicad/Libraries/lm1881
 LibName31=/Users/charlie/Documents/Kicad/Libraries/ESP32-Footprints/ESP32-footprints-Shem-Lib
+LibName32=switches
+LibName33=video
+LibName34=/Users/charlie/Documents/Kicad/Libraries/rca_switch
