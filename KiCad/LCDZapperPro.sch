@@ -300,9 +300,9 @@ F 3 "" H 3400 1100 50  0001 C CNN
 	1    3400 1100
 	1    0    0    -1  
 $EndComp
-Text GLabel 5700 1800 2    60   Input ~ 0
+Text GLabel 5700 1600 2    60   Input ~ 0
 CSYNC
-Text GLabel 5700 2200 2    60   Output ~ 0
+Text GLabel 5700 1200 2    60   Output ~ 0
 DIM
 $Comp
 L USB_B J2
@@ -651,7 +651,7 @@ F 3 "" H 4950 6450 50  0001 C CNN
 	1    4950 6450
 	0    1    1    0   
 $EndComp
-Text GLabel 5700 1600 2    60   Output ~ 0
+Text GLabel 5700 1300 2    60   Output ~ 0
 DIM_INV
 $Comp
 L 74HC00 U5
@@ -679,9 +679,9 @@ F 3 "" H 12900 6400 50  0001 C CNN
 	3    12900 6400
 	1    0    0    -1  
 $EndComp
-Text GLabel 3450 2250 0    60   Output ~ 0
+Text GLabel 5700 1900 2    60   Output ~ 0
 SELECT1
-Text GLabel 3450 2350 0    60   Output ~ 0
+Text GLabel 5700 2100 2    60   Output ~ 0
 SELECT2
 $Comp
 L +3.3V #PWR022
@@ -1039,7 +1039,7 @@ F 3 "" H 10100 5500 50  0001 C CNN
 	1    10100 5500
 	0    1    1    0   
 $EndComp
-Text GLabel 3450 1950 0    60   Output ~ 0
+Text GLabel 5700 1800 2    60   Output ~ 0
 WHITE_OVERRIDE
 $Comp
 L R R31
@@ -1314,12 +1314,12 @@ $EndComp
 $Comp
 L TEST TP3
 U 1 1 5992E333
-P 1750 6250
-F 0 "TP3" H 1750 6550 50  0000 C BNN
-F 1 "TEST_VIN" H 1750 6500 50  0000 C CNN
-F 2 "Measurement_Points:Measurement_Point_Round-SMD-Pad_Small" H 1750 6250 50  0001 C CNN
-F 3 "" H 1750 6250 50  0001 C CNN
-	1    1750 6250
+P 1500 6550
+F 0 "TP3" H 1500 6850 50  0000 C BNN
+F 1 "TEST_VIN" H 1500 6800 50  0000 C CNN
+F 2 "Measurement_Points:Measurement_Point_Round-SMD-Pad_Small" H 1500 6550 50  0001 C CNN
+F 3 "" H 1500 6550 50  0001 C CNN
+	1    1500 6550
 	-1   0    0    1   
 $EndComp
 $Comp
@@ -1358,12 +1358,12 @@ $EndComp
 $Comp
 L TEST TP15
 U 1 1 59932B2A
-P 8850 4150
-F 0 "TP15" H 8850 4450 50  0000 C BNN
-F 1 "TEST_CIN" H 8850 4400 50  0000 C CNN
-F 2 "Measurement_Points:Measurement_Point_Round-SMD-Pad_Small" H 8850 4150 50  0001 C CNN
-F 3 "" H 8850 4150 50  0001 C CNN
-	1    8850 4150
+P 9150 4300
+F 0 "TP15" H 9150 4600 50  0000 C BNN
+F 1 "TEST_CIN" H 9150 4550 50  0000 C CNN
+F 2 "Measurement_Points:Measurement_Point_Round-SMD-Pad_Small" H 9150 4300 50  0001 C CNN
+F 3 "" H 9150 4300 50  0001 C CNN
+	1    9150 4300
 	-1   0    0    1   
 $EndComp
 $Comp
@@ -1476,14 +1476,14 @@ F 3 "" H 13650 6300 50  0001 C CNN
 	1    13650 6300
 	1    0    0    -1  
 $EndComp
-Text GLabel 5700 1200 2    60   Output ~ 0
+Text GLabel 3450 2150 0    60   Output ~ 0
 SIG1_1
-Text GLabel 5700 1300 2    60   Output ~ 0
+Text GLabel 3450 2250 0    60   Output ~ 0
 SIG1_2
 NoConn ~ 4950 3000
-Text GLabel 5700 2000 2    60   Output ~ 0
+Text GLabel 3450 2350 0    60   Output ~ 0
 SIG2_1
-Text GLabel 5700 2100 2    60   Output ~ 0
+Text GLabel 3450 2450 0    60   Output ~ 0
 SIG2_2
 NoConn ~ 4250 3000
 $Comp
@@ -1676,7 +1676,7 @@ Connection ~ 8850 3650
 Wire Wire Line
 	9250 3650 9350 3650
 Wire Wire Line
-	8850 4000 8850 4150
+	8850 4000 8850 4250
 Wire Wire Line
 	9300 3400 9300 3650
 Connection ~ 9300 3650
@@ -1708,7 +1708,7 @@ Wire Wire Line
 Wire Wire Line
 	2150 5350 2200 5350
 Wire Wire Line
-	1750 5950 1750 6250
+	1750 5950 1750 6500
 Wire Wire Line
 	1600 6250 2150 6250
 Connection ~ 1750 6250
@@ -2130,7 +2130,7 @@ U 1 1 59BEB906
 P 16800 1850
 F 0 "J6" H 16800 1350 50  0000 C CNN
 F 1 "RJ45_LEDS" V 17300 1850 50  0000 C CNN
-F 2 "Connectors:RJ45_8" H 16800 1800 50  0001 C CNN
+F 2 "Connectors:RJ45_8_LED" H 16800 1800 50  0001 C CNN
 F 3 "" H 16800 1800 50  0001 C CNN
 	1    16800 1850
 	0    1    1    0   
@@ -2232,7 +2232,7 @@ Wire Wire Line
 	16650 1250 16300 1250
 Wire Wire Line
 	17400 1150 16950 1150
-Text GLabel 5700 1900 2    60   Output ~ 0
+Text GLabel 3450 1950 0    60   Output ~ 0
 FRONTLED1
 Text GLabel 16300 1150 0    60   Input ~ 0
 FRONTLED1
@@ -2255,11 +2255,11 @@ Wire Wire Line
 	2150 6450 2150 6900
 Wire Wire Line
 	2900 6800 2700 6800
-Text GLabel 3450 2150 0    60   Output ~ 0
+Text GLabel 5700 2000 2    60   Output ~ 0
 SELECT1_DELAY
 Wire Wire Line
 	3650 2150 3450 2150
-Text GLabel 3450 2450 0    60   Output ~ 0
+Text GLabel 5700 2200 2    60   Output ~ 0
 SELECT2_DELAY
 Wire Wire Line
 	3650 2450 3450 2450
@@ -2490,7 +2490,7 @@ U 1 1 59C06006
 P 16800 5300
 F 0 "J7" H 16800 4800 50  0000 C CNN
 F 1 "RJ45_LEDS" V 17300 5300 50  0000 C CNN
-F 2 "Connectors:RJ45_8" H 16800 5250 50  0001 C CNN
+F 2 "Connectors:RJ45_8_LED" H 16800 5250 50  0001 C CNN
 F 3 "" H 16800 5250 50  0001 C CNN
 	1    16800 5300
 	0    1    1    0   
@@ -2728,4 +2728,61 @@ Wire Wire Line
 Connection ~ 9400 5150
 Wire Wire Line
 	8950 5150 8800 5150
+$Comp
+L R R40
+U 1 1 59C41234
+P 8850 4400
+F 0 "R40" V 8930 4400 50  0000 C CNN
+F 1 "330K" V 8850 4400 50  0000 C CNN
+F 2 "Resistors_SMD:R_1206_HandSoldering" V 8780 4400 50  0001 C CNN
+F 3 "" H 8850 4400 50  0001 C CNN
+	1    8850 4400
+	1    0    0    -1  
+$EndComp
+Wire Wire Line
+	9150 4300 9150 4250
+Wire Wire Line
+	9150 4250 8850 4250
+$Comp
+L GND #PWR061
+U 1 1 59C4188D
+P 8850 4600
+F 0 "#PWR061" H 8850 4350 50  0001 C CNN
+F 1 "GND" H 8850 4450 50  0000 C CNN
+F 2 "" H 8850 4600 50  0001 C CNN
+F 3 "" H 8850 4600 50  0001 C CNN
+	1    8850 4600
+	1    0    0    -1  
+$EndComp
+Wire Wire Line
+	8850 4550 8850 4600
+$Comp
+L R R39
+U 1 1 59C42D02
+P 1750 6650
+F 0 "R39" V 1830 6650 50  0000 C CNN
+F 1 "330K" V 1750 6650 50  0000 C CNN
+F 2 "Resistors_SMD:R_1206_HandSoldering" V 1680 6650 50  0001 C CNN
+F 3 "" H 1750 6650 50  0001 C CNN
+	1    1750 6650
+	1    0    0    -1  
+$EndComp
+Wire Wire Line
+	1500 6550 1500 6400
+Wire Wire Line
+	1500 6400 1750 6400
+Connection ~ 1750 6400
+$Comp
+L GND #PWR062
+U 1 1 59C4326C
+P 1750 6900
+F 0 "#PWR062" H 1750 6650 50  0001 C CNN
+F 1 "GND" H 1750 6750 50  0000 C CNN
+F 2 "" H 1750 6900 50  0001 C CNN
+F 3 "" H 1750 6900 50  0001 C CNN
+	1    1750 6900
+	1    0    0    -1  
+$EndComp
+Wire Wire Line
+	1750 6800 1750 6900
 $EndSCHEMATC
