@@ -4,6 +4,11 @@ Device for making lightgun games playable on modern LCD TVs with original hardwa
 
 ![Picture of prototype board](https://github.com/charcole/LCDZapper/blob/master/Images/LCDZapperPro.jpg "Picture of prototype board")
 
+Version3
+--------
+
+**This branch is for the third version of the design. After manufacture I found a number of problems. I've updated the schematics with the changes I made to fix it. However I won't be updating the board as I want to move on to the next revision. Therefore I suggest if you want to build one yourself you stick with version 2 for now (which is currently the master branch for this repo).**
+
 Version2
 --------
 
