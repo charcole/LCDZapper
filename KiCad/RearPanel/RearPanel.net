@@ -1,0 +1,44 @@
+(export (version D)
+  (design
+    (source /Users/charlie/github/LCDZapper/KiCad/RearPanel/RearPanel.sch)
+    (date "Sunday, 17 September 2017 'amt' 10:51:51")
+    (tool "Eeschema 4.0.6")
+    (sheet (number 1) (name /) (tstamps /)
+      (title_block
+        (title)
+        (company)
+        (rev)
+        (date)
+        (source RearPanel.sch)
+        (comment (number 1) (value ""))
+        (comment (number 2) (value ""))
+        (comment (number 3) (value ""))
+        (comment (number 4) (value "")))))
+  (components
+    (comp (ref TP1)
+      (value TEST)
+      (footprint Wire_Pads:SolderWirePad_single_SMD_5x10mm)
+      (libsource (lib device) (part TEST))
+      (sheetpath (names /) (tstamps /))
+      (tstamp 59BE44D8))
+    (comp (ref TP2)
+      (value TEST)
+      (footprint Wire_Pads:SolderWirePad_single_SMD_5x10mm)
+      (libsource (lib device) (part TEST))
+      (sheetpath (names /) (tstamps /))
+      (tstamp 59BE45AA)))
+  (libparts
+    (libpart (lib device) (part TEST)
+      (description "Testpoint, connection for test equipment")
+      (fields
+        (field (name Reference) TP)
+        (field (name Value) TEST))
+      (pins
+        (pin (num 1) (name ~) (type passive)))))
+  (libraries
+    (library (logical device)
+      (uri "/Library/Application Support/kicad/library/device.lib")))
+  (nets
+    (net (code 1) (name GND)
+      (node (ref TP1) (pin 1))
+      (node (ref TP2) (pin 1)))))
