@@ -28,16 +28,16 @@ extern "C"
 #include "esp_wiimote.h"
 #include "images.h"
 
-#define OUT_SCREEN_DIM  (GPIO_NUM_16) // Controls drawing spot on screen
-#define OUT_SCREEN_DIM_INV (GPIO_NUM_21) // Inverted version of above
-#define OUT_PLAYER1_LED (GPIO_NUM_26) // ANDed with detected white level in HW
-#define OUT_PLAYER2_LED (GPIO_NUM_27) // ANDed with detected white level in HW
-#define OUT_PLAYER1_LED_OUT_SELECTION_REG (GPIO_FUNC26_OUT_SEL_CFG_REG) // Used to turn on and off player LED output (for supporting two player)
-#define OUT_PLAYER2_LED_OUT_SELECTION_REG (GPIO_FUNC27_OUT_SEL_CFG_REG) // Used to turn on and off player LED output (for supporting two player)
-#define OUT_PLAYER1_TRIGGER_PULLED (GPIO_NUM_13) // Used for Wiimote-only operation
-#define OUT_PLAYER2_TRIGGER_PULLED (GPIO_NUM_14) // Used for Wiimote-only operation
+#define OUT_SCREEN_DIM  (GPIO_NUM_23) // Controls drawing spot on screen
+#define OUT_SCREEN_DIM_INV (GPIO_NUM_22) // Inverted version of above
+#define OUT_PLAYER1_LED (GPIO_NUM_18) // ANDed with detected white level in HW
+#define OUT_PLAYER2_LED (GPIO_NUM_17) // ANDed with detected white level in HW
+#define OUT_PLAYER1_LED_OUT_SELECTION_REG (GPIO_FUNC18_OUT_SEL_CFG_REG) // Used to turn on and off player LED output (for supporting two player)
+#define OUT_PLAYER2_LED_OUT_SELECTION_REG (GPIO_FUNC17_OUT_SEL_CFG_REG) // Used to turn on and off player LED output (for supporting two player)
+#define OUT_PLAYER1_TRIGGER_PULLED (GPIO_NUM_25) // Used for Wiimote-only operation
+#define OUT_PLAYER2_TRIGGER_PULLED (GPIO_NUM_27) // Used for Wiimote-only operation
 
-#define IN_COMPOSITE_SYNC (GPIO_NUM_19) // Compsite sync input (If changed change also in asm loop)
+#define IN_COMPOSITE_SYNC (GPIO_NUM_21) // Compsite sync input (If changed change also in asm loop)
 
 #define RMT_SCREEN_DIM_CHANNEL    RMT_CHANNEL_1     /*!< RMT channel for transmitter */
 
@@ -346,8 +346,8 @@ void WiimoteTask(void *pvParameters)
 		bool LocalShowPointer = ShowPointer || TextMode || LogoMode;
 		if (LocalShowPointer != LastLocalShowPointer)
 		{
-			gpio_matrix_out(OUT_SCREEN_DIM, LocalShowPointer ? RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL : SIG_GPIO_OUT_IDX, false, false);
-			gpio_matrix_out(OUT_SCREEN_DIM_INV, LocalShowPointer ? RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL : SIG_GPIO_OUT_IDX, true, false);
+			gpio_matrix_out(OUT_SCREEN_DIM, LocalShowPointer ? RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL : SIG_GPIO_OUT_IDX, true, false);
+			gpio_matrix_out(OUT_SCREEN_DIM_INV, LocalShowPointer ? RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL : SIG_GPIO_OUT_IDX, false, false);
 			LastLocalShowPointer = LocalShowPointer;
 		}
 		if (DisplayTime > 0)
@@ -405,19 +405,19 @@ static void RMTPeripheralInit()
 	PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[OUT_SCREEN_DIM], PIN_FUNC_GPIO);
 	gpio_set_direction(OUT_SCREEN_DIM, GPIO_MODE_OUTPUT);
 	gpio_set_level(OUT_SCREEN_DIM, 1); // If we turn it off keep high
-	gpio_matrix_out(OUT_SCREEN_DIM, RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL, false, false);
+	gpio_matrix_out(OUT_SCREEN_DIM, RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL, true, false);
 
 	// Screen dimmer (inverted)
 	PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[OUT_SCREEN_DIM_INV], PIN_FUNC_GPIO);
 	gpio_set_direction(OUT_SCREEN_DIM_INV, GPIO_MODE_OUTPUT);
 	gpio_set_level(OUT_SCREEN_DIM_INV, 1); // If we turn it off keep high (will be inverted)
-	gpio_matrix_out(OUT_SCREEN_DIM_INV, RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL, true, false);
+	gpio_matrix_out(OUT_SCREEN_DIM_INV, RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL, false, false);
 
 }
 
 inline void IRAM_ATTR ActivateRMTOnSyncFallingEdge(void)
 {
-	// Tight loop that sits spinning until GPIO19 (see assembly) aka IN_COMPOSITE_SYNC falls low and then starts RMT peripheral
+	// Tight loop that sits spinning until GPIO21 (see assembly) aka IN_COMPOSITE_SYNC falls low and then starts RMT peripheral
 
 	volatile uint32_t *RMTConfig1 = &RMT.conf_ch[RMT_SCREEN_DIM_CHANNEL].conf1.val;
 	volatile uint32_t *GPIOIn = &GPIO.in;
@@ -427,7 +427,7 @@ inline void IRAM_ATTR ActivateRMTOnSyncFallingEdge(void)
 			"\
 			memw;\
 SPINLOOP:   l32i.n %0, %1, 0;\
-			bbsi %0, 19, SPINLOOP;\
+			bbsi %0, 21, SPINLOOP;\
 			l32i.n %0, %2, 0;\
 			or %0, %0, %3;\
 			s32i.n %0, %2, 0;\
