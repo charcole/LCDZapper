@@ -68,6 +68,7 @@ static int CoopMask = 1; // Set to 0 for co-op play
 static int ReticuleStartLineNum[2] = { 1000,1000 };
 static int ReticuleXPosition[2] = { 320,320 };
 static int ReticuleSizeLookup[2][14];
+static uint32_t PlayerOutputSelection[2] = { 0,0 };
 
 class PlayerInput
 {
@@ -388,7 +389,7 @@ static void RMTPeripheralInit()
 	RMTTxConfig.rmt_mode = RMT_MODE_TX;
 	rmt_config(&RMTTxConfig);
 	rmt_driver_install(RMTTxConfig.channel, 0, 0);
-	RMTTxConfig.channel = RMT_SCREEN_DIM_CHANNEL + 1;
+	RMTTxConfig.channel = (rmt_channel_t)(RMT_SCREEN_DIM_CHANNEL + 1);
 	RMTTxConfig.gpio_num = OUT_PLAYER1_LED; // Will kick out last channel
 	RMTTxConfig.mem_block_num = 2;
 	rmt_config(&RMTTxConfig);
@@ -423,7 +424,7 @@ inline void IRAM_ATTR ActivateRMTOnSyncFallingEdge(uint32_t Bank)
 {
 	// Tight loop that sits spinning until GPIO21 (see assembly) aka IN_COMPOSITE_SYNC falls low and then starts RMT peripheral
 
-	volatile uint32_t *RMTConfig1 = &RMT.conf_ch[RMT_SCREEN_DIM_CHANNEL + bank].conf1.val;
+	volatile uint32_t *RMTConfig1 = &RMT.conf_ch[RMT_SCREEN_DIM_CHANNEL + Bank].conf1.val;
 	volatile uint32_t *GPIOIn = &GPIO.in;
 	uint32_t Temp = 0, TXStart = 1 | 8; // Start and reset
 	asm volatile
@@ -443,14 +444,14 @@ SPINLOOP:   l32i.n %0, %1, 0;\
 			);
 }
 
-uint32_t PlayerOutputSelection[2]={0,0};
-
 bool IRAM_ATTR SetupLine(uint32_t Bank)
 {
 	bool Active = false;
-	int CurrentPlayer = (CurrentLine & 1) & PlayerMask;
-	int StartingLine = ReticuleStartLineNum[CurrentPlayer];
-	int XCoordinate = ReticuleXPosition[CurrentPlayer];
+	bool bPlayerOnLine[2];
+	int StartingLine[2] = { ReticuleStartLineNum[0], ReticuleStartLineNum[1] };
+	bPlayerOnLine[0] = CurrentLine >= StartingLine[0] && CurrentLine < StartingLine[0] + ARRAY_NUM(ReticuleSizeLookup[0]);
+	bPlayerOnLine[1] = CurrentLine >= StartingLine[1] && CurrentLine < StartingLine[1] + ARRAY_NUM(ReticuleSizeLookup[0]);
+
 	rmt_item32_t EndTerminator;
 	EndTerminator.level0 = 1;
 	EndTerminator.duration0 = 0;
@@ -470,8 +471,8 @@ bool IRAM_ATTR SetupLine(uint32_t Bank)
 	}
 	else if (TextMode && CurrentLine >= TEXT_START_LINE && CurrentLine < TEXT_END_LINE)
 	{
-		PlayerOutputSelection[0] = GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S)); // Keep this line high (not used)
-		PlayerOutputSelection[1] = GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S)); // Keep this line high (not used)
+		PlayerOutputSelection[0] = GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S); // Keep this line high (not used)
+		PlayerOutputSelection[1] = GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S); // Keep this line high (not used)
 		int LineIdx = CurrentLine - TEXT_START_LINE;
 		for (int i = 0; i < 8; i++)
 		{
@@ -480,16 +481,53 @@ bool IRAM_ATTR SetupLine(uint32_t Bank)
 		RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[8].val = EndTerminator.val;
 		Active = true;
 	}
-	else if (CurrentLine >= StartingLine && CurrentLine < StartingLine + ARRAY_NUM(ReticuleSizeLookup[0]))
+	else if (bPlayerOnLine[0] && bPlayerOnLine[1])
 	{
+		int CurrentPlayer = (CurrentLine & PlayerMask); // Both players on same line. Draw triggering currently still every other line
 		int OutputSelect = CurrentPlayer & CoopMask; // In co-op always output to player 1's gun otherwise select which gun to go to
 		PlayerOutputSelection[OutputSelect] = GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S); // Keep this line high (not used)
 		PlayerOutputSelection[1 - OutputSelect] = GPIO_FUNC0_OUT_INV_SEL | ((RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL) << GPIO_FUNC0_OUT_SEL_S); // Output pulse
+
+		int XStart[2];
+		int XEnd[2];
+		XStart[0] = ReticuleXPosition[0] - ReticuleSizeLookup[0][CurrentLine - StartingLine[0]];
+		XStart[1] = ReticuleXPosition[1] - ReticuleSizeLookup[1][CurrentLine - StartingLine[1]];
+		XEnd[0] = XStart[0] + 2 * ReticuleSizeLookup[0][CurrentLine - StartingLine[0]];
+		XEnd[1] = XStart[1] + 2 * ReticuleSizeLookup[1][CurrentLine - StartingLine[1]];
+		int MinPlayer = (XStart[0]<XStart[1]) ? 0 : 1;
 		rmt_item32_t HorizontalPulse;
 		HorizontalPulse.level0 = 1;
-		HorizontalPulse.duration0 = XCoordinate - ReticuleSizeLookup[CurrentPlayer][CurrentLine - StartingLine];
 		HorizontalPulse.level1 = 0;
-		HorizontalPulse.duration1 = 2 * ReticuleSizeLookup[CurrentPlayer][CurrentLine - StartingLine];
+		if (XEnd[MinPlayer] <= XStart[1-MinPlayer]) // Overlapping
+		{
+			HorizontalPulse.duration0 = XStart[MinPlayer];
+			HorizontalPulse.duration1 = XEnd[1 - MinPlayer] - XStart[MinPlayer];
+			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[0].val = HorizontalPulse.val;
+			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[1].val = EndTerminator.val;
+		}
+		else // No overlap
+		{
+			HorizontalPulse.duration0 = XStart[MinPlayer];
+			HorizontalPulse.duration1 = XEnd[MinPlayer] - XStart[MinPlayer];
+			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[0].val = HorizontalPulse.val;
+			HorizontalPulse.duration0 = XStart[1 - MinPlayer] - XEnd[MinPlayer];
+			HorizontalPulse.duration1 = XEnd[1 - MinPlayer] - XStart[1 - MinPlayer];
+			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[1].val = HorizontalPulse.val;
+			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[2].val = EndTerminator.val;
+		}
+	}
+	else if (bPlayerOnLine[0] || bPlayerOnLine[1])
+	{
+		int CurrentPlayer = bPlayerOnLine[0] ? 0 : 1;
+		int OutputSelect = CurrentPlayer & CoopMask; // In co-op always output to player 1's gun otherwise select which gun to go to
+		PlayerOutputSelection[OutputSelect] = GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S); // Keep this line high (not used)
+		PlayerOutputSelection[1 - OutputSelect] = GPIO_FUNC0_OUT_INV_SEL | ((RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL) << GPIO_FUNC0_OUT_SEL_S); // Output pulse
+
+		rmt_item32_t HorizontalPulse;
+		HorizontalPulse.level0 = 1;
+		HorizontalPulse.duration0 = ReticuleXPosition[CurrentPlayer] - ReticuleSizeLookup[CurrentPlayer][CurrentLine - StartingLine[CurrentPlayer]];
+		HorizontalPulse.level1 = 0;
+		HorizontalPulse.duration1 = 2 * ReticuleSizeLookup[CurrentPlayer][CurrentLine - StartingLine[CurrentPlayer]];
 		RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[0].val = HorizontalPulse.val;
 		RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[1].val = EndTerminator.val;
 		Active = true;
