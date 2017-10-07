@@ -30,16 +30,20 @@ extern "C"
 
 #define OUT_SCREEN_DIM  (GPIO_NUM_23) // Controls drawing spot on screen
 #define OUT_SCREEN_DIM_INV (GPIO_NUM_22) // Inverted version of above
+#define OUT_SCREEN_DIM_SELECTION_REG (GPIO_FUNC23_OUT_SEL_CFG_REG) // Used to route which bank goes to the screen dimming
+#define OUT_SCREEN_DIM_INV_SELECTION_REG (GPIO_FUNC22_OUT_SEL_CFG_REG) // Used to route which bank goes to the screen dimming
 #define OUT_PLAYER1_LED (GPIO_NUM_18) // ANDed with detected white level in HW
 #define OUT_PLAYER2_LED (GPIO_NUM_17) // ANDed with detected white level in HW
-#define OUT_PLAYER1_LED_OUT_SELECTION_REG (GPIO_FUNC18_OUT_SEL_CFG_REG) // Used to turn on and off player LED output (for supporting two player)
-#define OUT_PLAYER2_LED_OUT_SELECTION_REG (GPIO_FUNC17_OUT_SEL_CFG_REG) // Used to turn on and off player LED output (for supporting two player)
+#define OUT_PLAYER1_LED_DELAYED (GPIO_NUM_5) // ANDed with detected white level in HW
+#define OUT_PLAYER2_LED_DELAYED (GPIO_NUM_16) // ANDed with detected white level in HW
 #define OUT_PLAYER1_TRIGGER_PULLED (GPIO_NUM_25) // Used for Wiimote-only operation
 #define OUT_PLAYER2_TRIGGER_PULLED (GPIO_NUM_27) // Used for Wiimote-only operation
 
 #define IN_COMPOSITE_SYNC (GPIO_NUM_21) // Compsite sync input (If changed change also in asm loop)
 
-#define RMT_SCREEN_DIM_CHANNEL    RMT_CHANNEL_1     /*!< RMT channel for transmitter */
+#define RMT_SCREEN_DIM_CHANNEL    	RMT_CHANNEL_1     /*!< RMT channel for screen*/
+#define RMT_TRIGGER_CHANNEL			RMT_CHANNEL_3     /*!< RMT channel for trigger */
+#define RMT_DELAY_TRIGGER_CHANNEL	RMT_CHANNEL_5     /*!< RMT channel for delayed trigger */
 
 // Change these if using with NTSC
 #define TIMING_RETICULE_WIDTH 75.0f // Generates a circle in PAL but might need adjusting for NTSC (In 80ths of a microsecond)
@@ -68,7 +72,8 @@ static int CoopMask = 1; // Set to 0 for co-op play
 static int ReticuleStartLineNum[2] = { 1000,1000 };
 static int ReticuleXPosition[2] = { 320,320 };
 static int ReticuleSizeLookup[2][14];
-static uint32_t PlayerOutputSelection[2] = { 0,0 };
+static int CalibrationLineOffset = ARRAY_NUM(ReticuleSizeLookup[0])/2;
+static int CalibrationDelay = 0;
 
 class PlayerInput
 {
@@ -326,7 +331,6 @@ void WiimoteTask(void *pvParameters)
 	GWiimoteManager.Init();
 	PlayerInput Player1(0);
 	PlayerInput Player2(1);
-	bool LastLocalShowPointer=false;
 	while (true)
 	{
 		GWiimoteManager.Tick();
@@ -343,13 +347,6 @@ void WiimoteTask(void *pvParameters)
 		{
 			gpio_set_level(OUT_PLAYER1_TRIGGER_PULLED, Player1Button);
 			gpio_set_level(OUT_PLAYER2_TRIGGER_PULLED, Player2Button);
-		}
-		bool LocalShowPointer = ShowPointer || TextMode || LogoMode;
-		if (LocalShowPointer != LastLocalShowPointer)
-		{
-			gpio_matrix_out(OUT_SCREEN_DIM, LocalShowPointer ? RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL : SIG_GPIO_OUT_IDX, true, false);
-			gpio_matrix_out(OUT_SCREEN_DIM_INV, LocalShowPointer ? RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL : SIG_GPIO_OUT_IDX, false, false);
-			LastLocalShowPointer = LocalShowPointer;
 		}
 		if (DisplayTime > 0)
 		{
@@ -376,7 +373,7 @@ static void RMTPeripheralInit()
 
 	rmt_config_t RMTTxConfig;
 	RMTTxConfig.channel = RMT_SCREEN_DIM_CHANNEL;
-	RMTTxConfig.gpio_num = OUT_PLAYER1_LED;
+	RMTTxConfig.gpio_num = OUT_SCREEN_DIM;
 	RMTTxConfig.mem_block_num = 1;
 	RMTTxConfig.clk_div = 1;
 	RMTTxConfig.tx_config.loop_en = false;
@@ -390,22 +387,24 @@ static void RMTPeripheralInit()
 	rmt_config(&RMTTxConfig);
 	rmt_driver_install(RMTTxConfig.channel, 0, 0);
 	RMTTxConfig.channel = (rmt_channel_t)(RMT_SCREEN_DIM_CHANNEL + 1);
-	RMTTxConfig.gpio_num = OUT_PLAYER1_LED; // Will kick out last channel
-	RMTTxConfig.mem_block_num = 2;
 	rmt_config(&RMTTxConfig);
 	rmt_driver_install(RMTTxConfig.channel, 0, 0);
-
-	// First player 555 input
-	PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[OUT_PLAYER1_LED], PIN_FUNC_GPIO);
-	gpio_set_direction(OUT_PLAYER1_LED, GPIO_MODE_OUTPUT);
-	gpio_set_level(OUT_PLAYER1_LED, 1); // If we turn it off keep high
-	gpio_matrix_out(OUT_PLAYER1_LED, RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL, true, false);
-
-	// Second player 555 input
-	PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[OUT_PLAYER2_LED], PIN_FUNC_GPIO);
-	gpio_set_direction(OUT_PLAYER2_LED, GPIO_MODE_OUTPUT);
-	gpio_set_level(OUT_PLAYER2_LED, 1); // If we turn it off keep high
-	gpio_matrix_out(OUT_PLAYER2_LED, RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL, true, false);
+	RMTTxConfig.channel = RMT_TRIGGER_CHANNEL;
+	RMTTxConfig.gpio_num = OUT_PLAYER1_LED;
+	rmt_config(&RMTTxConfig);
+	rmt_driver_install(RMTTxConfig.channel, 0, 0);
+	RMTTxConfig.channel = (rmt_channel_t)(RMT_TRIGGER_CHANNEL + 1);
+	RMTTxConfig.gpio_num = OUT_PLAYER2_LED;
+	rmt_config(&RMTTxConfig);
+	rmt_driver_install(RMTTxConfig.channel, 0, 0);
+	RMTTxConfig.channel = RMT_DELAY_TRIGGER_CHANNEL;
+	RMTTxConfig.gpio_num = OUT_PLAYER1_LED_DELAYED;
+	rmt_config(&RMTTxConfig);
+	rmt_driver_install(RMTTxConfig.channel, 0, 0);
+	RMTTxConfig.channel = (rmt_channel_t)(RMT_DELAY_TRIGGER_CHANNEL + 1);
+	RMTTxConfig.gpio_num = OUT_PLAYER2_LED_DELAYED;
+	rmt_config(&RMTTxConfig);
+	rmt_driver_install(RMTTxConfig.channel, 0, 0);
 
 	// Screen dimmer
 	PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[OUT_SCREEN_DIM], PIN_FUNC_GPIO);
@@ -420,134 +419,167 @@ static void RMTPeripheralInit()
 	gpio_matrix_out(OUT_SCREEN_DIM_INV, RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL, false, false);
 }
 
-inline void IRAM_ATTR ActivateRMTOnSyncFallingEdge(uint32_t Bank)
-{
-	// Tight loop that sits spinning until GPIO21 (see assembly) aka IN_COMPOSITE_SYNC falls low and then starts RMT peripheral
-
-	volatile uint32_t *RMTConfig1 = &RMT.conf_ch[RMT_SCREEN_DIM_CHANNEL + Bank].conf1.val;
-	volatile uint32_t *GPIOIn = &GPIO.in;
-	uint32_t Temp = 0, TXStart = 1 | 8; // Start and reset
-	asm volatile
-		(
+#define ActivateRMTOnSyncFallingEdgeAsmInner(Extra, Ident)\
+	asm volatile\
+		(\
 			"\
 			memw;\
-SPINLOOP:   l32i.n %0, %1, 0;\
-			bbsi %0, 21, SPINLOOP;\
+SPIN" #Ident ":   l32i.n %0, %1, 0;\
+			bbsi %0, 21, SPIN" #Ident ";\
 			l32i.n %0, %2, 0;\
 			or %0, %0, %3;\
-			s32i.n %0, %2, 0;\
-			memw;\
-		"
-			: "+r"(Temp)
-			: "r"(GPIOIn), "r"(RMTConfig1), "r"(TXStart)
-			:
-			);
+			"\
+			Extra \
+			"\
+			memw;"\
+			: "+r"(Temp)\
+			: "r"(GPIOIn), "r"(RMTConfig1), "r"(TXStart), "r"(RMTP1Config1), "r"(RMTP2Config1), "r"(RMTP1DConfig1), "r"(RMTP2DConfig1)\
+			:\
+		)
+
+#define ActivateRMTOnSyncFallingEdgeAsmLine(Extra, Ident) ActivateRMTOnSyncFallingEdgeAsmInner(Extra, Ident)
+#define ActivateRMTOnSyncFallingEdgeAsm(Extra) ActivateRMTOnSyncFallingEdgeAsmLine(Extra, __LINE__)
+
+void IRAM_ATTR ActivateRMTOnSyncFallingEdge(uint32_t Bank, int Active)
+{
+	// Tight loop that sits spinning until GPIO21 (see assembly) aka IN_COMPOSITE_SYNC falls low and then starts RMT peripherals
+
+	volatile uint32_t *RMTConfig1 = &RMT.conf_ch[RMT_SCREEN_DIM_CHANNEL + Bank].conf1.val;
+	volatile uint32_t *RMTP1Config1 = &RMT.conf_ch[RMT_TRIGGER_CHANNEL].conf1.val;
+	volatile uint32_t *RMTP2Config1 = &RMT.conf_ch[RMT_TRIGGER_CHANNEL + 1].conf1.val;
+	volatile uint32_t *RMTP1DConfig1 = &RMT.conf_ch[RMT_DELAY_TRIGGER_CHANNEL].conf1.val;
+	volatile uint32_t *RMTP2DConfig1 = &RMT.conf_ch[RMT_DELAY_TRIGGER_CHANNEL + 1].conf1.val;
+	volatile uint32_t *GPIOIn = &GPIO.in;
+	uint32_t Temp = 0, TXStart = 1 | 8; // Start and reset
+	switch (Active)
+	{
+		case 1: ActivateRMTOnSyncFallingEdgeAsm("s32i.n %0, %2, 0;"); break;
+		case 2: ActivateRMTOnSyncFallingEdgeAsm("s32i.n %0, %4, 0; s32i.n %0, %6, 0;"); break;
+		case 3: ActivateRMTOnSyncFallingEdgeAsm("s32i.n %0, %2, 0; s32i.n %0, %4, 0; s32i.n %0, %6, 0;"); break;
+		case 4: ActivateRMTOnSyncFallingEdgeAsm("s32i.n %0, %5, 0; s32i.n %0, %7, 0;"); break;
+		case 5: ActivateRMTOnSyncFallingEdgeAsm("s32i.n %0, %2, 0; s32i.n %0, %5, 0; s32i.n %0, %7, 0;"); break;
+		case 6: ActivateRMTOnSyncFallingEdgeAsm("s32i.n %0, %4, 0; s32i.n %0, %5, 0; s32i.n %0, %6, 0; s32i.n %0, %7, 0;"); break;
+		case 7: ActivateRMTOnSyncFallingEdgeAsm("s32i.n %0, %2, 0; s32i.n %0, %4, 0; s32i.n %0, %5, 0; s32i.n %0, %6, 0; s32i.n %0, %7, 0;"); break;
+	}
 }
 
-bool IRAM_ATTR SetupLine(uint32_t Bank)
+int IRAM_ATTR SetupLine(uint32_t Bank)
 {
-	bool Active = false;
-	bool bPlayerOnLine[2];
+	int Active = 0;
 	int StartingLine[2] = { ReticuleStartLineNum[0], ReticuleStartLineNum[1] };
-	bPlayerOnLine[0] = CurrentLine >= StartingLine[0] && CurrentLine < StartingLine[0] + ARRAY_NUM(ReticuleSizeLookup[0]);
-	bPlayerOnLine[1] = CurrentLine >= StartingLine[1] && CurrentLine < StartingLine[1] + ARRAY_NUM(ReticuleSizeLookup[0]);
 
 	rmt_item32_t EndTerminator;
 	EndTerminator.level0 = 1;
 	EndTerminator.duration0 = 0;
 	EndTerminator.level1 = 1;
 	EndTerminator.duration1 = 0;
-	if (LogoMode && CurrentLine >= LOGO_START_LINE && CurrentLine < LOGO_END_LINE)
+	
+	if (ShowPointer)
 	{
-		PlayerOutputSelection[0] = GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S); // Keep this line high (not used)
-		PlayerOutputSelection[1] = GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S); // Keep this line high (not used)
-		int LineIdx = CurrentLine - LOGO_START_LINE;
-		for (int i = 0; i < 8; i++)
+		bool bPlayerVisibleOnLine[2];
+		bPlayerVisibleOnLine[0] = CurrentLine >= StartingLine[0] && CurrentLine < StartingLine[0] + ARRAY_NUM(ReticuleSizeLookup[0]);
+		bPlayerVisibleOnLine[1] = CurrentLine >= StartingLine[1] && CurrentLine < StartingLine[1] + ARRAY_NUM(ReticuleSizeLookup[0]);
+		if (LogoMode && CurrentLine >= LOGO_START_LINE && CurrentLine < LOGO_END_LINE)
 		{
-			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[i].val = ImageLogo[LineIdx][i];
+			int LineIdx = CurrentLine - LOGO_START_LINE;
+			for (int i = 0; i < 8; i++)
+			{
+				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[i].val = ImageLogo[LineIdx][i];
+			}
+			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[8].val = EndTerminator.val;
+			Active = 1;
 		}
-		RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[8].val = EndTerminator.val;
-		Active = true;
-	}
-	else if (TextMode && CurrentLine >= TEXT_START_LINE && CurrentLine < TEXT_END_LINE)
-	{
-		PlayerOutputSelection[0] = GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S); // Keep this line high (not used)
-		PlayerOutputSelection[1] = GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S); // Keep this line high (not used)
-		int LineIdx = CurrentLine - TEXT_START_LINE;
-		for (int i = 0; i < 8; i++)
+		else if (TextMode && CurrentLine >= TEXT_START_LINE && CurrentLine < TEXT_END_LINE)
 		{
-			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[i].val = ImageData[8*LineIdx + i];
+			int LineIdx = CurrentLine - TEXT_START_LINE;
+			for (int i = 0; i < 8; i++)
+			{
+				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[i].val = ImageData[8*LineIdx + i];
+			}
+			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[8].val = EndTerminator.val;
+			Active = 1;
 		}
-		RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[8].val = EndTerminator.val;
-		Active = true;
-	}
-	else if (bPlayerOnLine[0] && bPlayerOnLine[1])
-	{
-		int CurrentPlayer = (CurrentLine & PlayerMask); // Both players on same line. Draw triggering currently still every other line
-		int OutputSelect = CurrentPlayer & CoopMask; // In co-op always output to player 1's gun otherwise select which gun to go to
-		PlayerOutputSelection[OutputSelect] = GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S); // Keep this line high (not used)
-		PlayerOutputSelection[1 - OutputSelect] = GPIO_FUNC0_OUT_INV_SEL | ((RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL) << GPIO_FUNC0_OUT_SEL_S); // Output pulse
-
-		int XStart[2];
-		int XEnd[2];
-		XStart[0] = ReticuleXPosition[0] - ReticuleSizeLookup[0][CurrentLine - StartingLine[0]];
-		XStart[1] = ReticuleXPosition[1] - ReticuleSizeLookup[1][CurrentLine - StartingLine[1]];
-		XEnd[0] = XStart[0] + 2 * ReticuleSizeLookup[0][CurrentLine - StartingLine[0]];
-		XEnd[1] = XStart[1] + 2 * ReticuleSizeLookup[1][CurrentLine - StartingLine[1]];
-		int MinPlayer = (XStart[0]<XStart[1]) ? 0 : 1;
-		rmt_item32_t HorizontalPulse;
-		HorizontalPulse.level0 = 1;
-		HorizontalPulse.level1 = 0;
-		if (XEnd[MinPlayer] <= XStart[1-MinPlayer]) // Overlapping
+		else if (bPlayerVisibleOnLine[0] && bPlayerVisibleOnLine[1])
 		{
-			HorizontalPulse.duration0 = XStart[MinPlayer];
-			HorizontalPulse.duration1 = XEnd[1 - MinPlayer] - XStart[MinPlayer];
+			int XStart[2];
+			int XEnd[2];
+			XStart[0] = ReticuleXPosition[0] - ReticuleSizeLookup[0][CurrentLine - StartingLine[0]];
+			XStart[1] = ReticuleXPosition[1] - ReticuleSizeLookup[1][CurrentLine - StartingLine[1]];
+			XEnd[0] = XStart[0] + 2 * ReticuleSizeLookup[0][CurrentLine - StartingLine[0]];
+			XEnd[1] = XStart[1] + 2 * ReticuleSizeLookup[1][CurrentLine - StartingLine[1]];
+			int MinPlayer = (XStart[0]<XStart[1]) ? 0 : 1;
+			rmt_item32_t HorizontalPulse;
+			HorizontalPulse.level0 = 1;
+			HorizontalPulse.level1 = 0;
+			if (XEnd[MinPlayer] <= XStart[1-MinPlayer]) // Overlapping
+			{
+				HorizontalPulse.duration0 = XStart[MinPlayer];
+				HorizontalPulse.duration1 = XEnd[1 - MinPlayer] - XStart[MinPlayer];
+				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[0].val = HorizontalPulse.val;
+				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[1].val = EndTerminator.val;
+			}
+			else // No overlap
+			{
+				HorizontalPulse.duration0 = XStart[MinPlayer];
+				HorizontalPulse.duration1 = XEnd[MinPlayer] - XStart[MinPlayer];
+				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[0].val = HorizontalPulse.val;
+				HorizontalPulse.duration0 = XStart[1 - MinPlayer] - XEnd[MinPlayer];
+				HorizontalPulse.duration1 = XEnd[1 - MinPlayer] - XStart[1 - MinPlayer];
+				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[1].val = HorizontalPulse.val;
+				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[2].val = EndTerminator.val;
+			}
+			Active = 1;
+		}
+		else if (bPlayerVisibleOnLine[0] || bPlayerVisibleOnLine[1])
+		{
+			int CurrentPlayer = bPlayerVisibleOnLine[0] ? 0 : 1;
+			rmt_item32_t HorizontalPulse;
+			HorizontalPulse.level0 = 1;
+			HorizontalPulse.duration0 = ReticuleXPosition[CurrentPlayer] - ReticuleSizeLookup[CurrentPlayer][CurrentLine - StartingLine[CurrentPlayer]];
+			HorizontalPulse.level1 = 0;
+			HorizontalPulse.duration1 = 2 * ReticuleSizeLookup[CurrentPlayer][CurrentLine - StartingLine[CurrentPlayer]];
 			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[0].val = HorizontalPulse.val;
 			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[1].val = EndTerminator.val;
-		}
-		else // No overlap
-		{
-			HorizontalPulse.duration0 = XStart[MinPlayer];
-			HorizontalPulse.duration1 = XEnd[MinPlayer] - XStart[MinPlayer];
-			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[0].val = HorizontalPulse.val;
-			HorizontalPulse.duration0 = XStart[1 - MinPlayer] - XEnd[MinPlayer];
-			HorizontalPulse.duration1 = XEnd[1 - MinPlayer] - XStart[1 - MinPlayer];
-			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[1].val = HorizontalPulse.val;
-			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[2].val = EndTerminator.val;
+			Active = 1;
 		}
 	}
-	else if (bPlayerOnLine[0] || bPlayerOnLine[1])
-	{
-		int CurrentPlayer = bPlayerOnLine[0] ? 0 : 1;
-		int OutputSelect = CurrentPlayer & CoopMask; // In co-op always output to player 1's gun otherwise select which gun to go to
-		PlayerOutputSelection[OutputSelect] = GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S); // Keep this line high (not used)
-		PlayerOutputSelection[1 - OutputSelect] = GPIO_FUNC0_OUT_INV_SEL | ((RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL) << GPIO_FUNC0_OUT_SEL_S); // Output pulse
 
-		rmt_item32_t HorizontalPulse;
-		HorizontalPulse.level0 = 1;
-		HorizontalPulse.duration0 = ReticuleXPosition[CurrentPlayer] - ReticuleSizeLookup[CurrentPlayer][CurrentLine - StartingLine[CurrentPlayer]];
-		HorizontalPulse.level1 = 0;
-		HorizontalPulse.duration1 = 2 * ReticuleSizeLookup[CurrentPlayer][CurrentLine - StartingLine[CurrentPlayer]];
-		RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[0].val = HorizontalPulse.val;
-		RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[1].val = EndTerminator.val;
-		Active = true;
+	for (int Player=0; Player<2; Player++)
+	{
+		int Channel = RMT_TRIGGER_CHANNEL + Player;
+		int DelayChannel = RMT_DELAY_TRIGGER_CHANNEL + Player;
+		if (CurrentLine == StartingLine[Player] + CalibrationLineOffset)
+		{
+			rmt_item32_t HorizontalPulse;
+			HorizontalPulse.level0 = 1;
+			HorizontalPulse.duration0 = ReticuleXPosition[Player];
+			HorizontalPulse.level1 = 0;
+			HorizontalPulse.duration1 = 8; // 1/10th microsecond
+			RMTMEM.chan[Channel].data32[0].val = HorizontalPulse.val;
+			HorizontalPulse.duration0 += CalibrationDelay;
+			RMTMEM.chan[DelayChannel].data32[0].val = HorizontalPulse.val;
+			RMTMEM.chan[Channel].data32[1].val = EndTerminator.val;
+			RMTMEM.chan[DelayChannel].data32[1].val = EndTerminator.val;
+			Active |= (2 << Player);
+		}
 	}
+
 	return Active;
 }
 
-void DoOutputSelection()
+void IRAM_ATTR DoOutputSelection(uint32_t Bank)
 {
 	// Select between holding high or actually outputting
-	WRITE_PERI_REG(OUT_PLAYER1_LED_OUT_SELECTION_REG, PlayerOutputSelection[0]);
-	WRITE_PERI_REG(OUT_PLAYER2_LED_OUT_SELECTION_REG, PlayerOutputSelection[1]);
+	WRITE_PERI_REG(OUT_SCREEN_DIM_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | ((RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL + Bank) << GPIO_FUNC0_OUT_SEL_S));
+	WRITE_PERI_REG(OUT_SCREEN_DIM_INV_SELECTION_REG, (RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL + Bank) << GPIO_FUNC0_OUT_SEL_S);
 }
 
-void IRAM_ATTR CompositeSyncPositiveEdge(uint32_t &Bank, bool &Active)
+void IRAM_ATTR CompositeSyncPositiveEdge(uint32_t &Bank, int &Active)
 {
-	if (Active && CurrentLine != 0)
+	if (Active != 0 && CurrentLine != 0)
 	{
-		ActivateRMTOnSyncFallingEdge(Bank);
-		DoOutputSelection();
+		ActivateRMTOnSyncFallingEdge(Bank, Active);
+		DoOutputSelection(Bank);
 	}
 	CurrentLine++;
 	Bank = 1 - Bank;
@@ -558,14 +590,14 @@ void IRAM_ATTR SpotGeneratorInnerLoop()
 {
 	timer_idx_t timer_idx = TIMER_1;
 	uint32_t Bank = 0;
-	bool Active = false; 
+	int Active = 0;
 	while (true)
 	{
 		TIMERG1.hw_timer[timer_idx].reload = 1;
 		while ((GPIO.in & BIT(IN_COMPOSITE_SYNC)) != 0); // while sync is still happening
 		TIMERG1.hw_timer[timer_idx].update = 1;
 		// Don't really need the 64-bit time but only reading cnt_low seems to caused it to sometimes not update. Adding some nops also worked but not as reliably as this
-		uint64_t Time = 2*((TIMERG1.hw_timer[timer_idx].cnt_high<<32) | TIMERG1.hw_timer[timer_idx].cnt_low); // Timer's clk is half APB hence 2x.
+		uint64_t Time = 2*(((uint64_t)TIMERG1.hw_timer[timer_idx].cnt_high<<32) | TIMERG1.hw_timer[timer_idx].cnt_low); // Timer's clk is half APB hence 2x.
 		while ((GPIO.in & BIT(IN_COMPOSITE_SYNC)) == 0); // while not sync
 		if (Time > TIMING_VSYNC_THRESHOLD)
 		{
@@ -603,6 +635,11 @@ void SpotGeneratorTask(void *pvParameters)
 	RMTInitialValues[0].level1 = 1;
 	RMTInitialValues[0].duration1 = 1;
 	rmt_write_items(RMT_SCREEN_DIM_CHANNEL, RMTInitialValues, 1, false);	// Prime the RMT
+	rmt_write_items(RMT_TRIGGER_CHANNEL, RMTInitialValues, 1, false);	// Prime the RMT
+	rmt_write_items(RMT_DELAY_TRIGGER_CHANNEL, RMTInitialValues, 1, false);	// Prime the RMT
+	rmt_write_items((rmt_channel_t)(RMT_SCREEN_DIM_CHANNEL + 1), RMTInitialValues, 1, false);	// Prime the RMT
+	rmt_write_items((rmt_channel_t)(RMT_TRIGGER_CHANNEL + 1), RMTInitialValues, 1, false);	// Prime the RMT
+	rmt_write_items((rmt_channel_t)(RMT_DELAY_TRIGGER_CHANNEL + 1), RMTInitialValues, 1, false);	// Prime the RMT
 
 	gpio_config_t CSyncGPIOConfig;
 	CSyncGPIOConfig.intr_type = GPIO_INTR_DISABLE;
