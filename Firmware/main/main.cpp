@@ -58,6 +58,8 @@ extern "C"
 #define LOGO_END_LINE (LOGO_START_LINE + 200)
 
 #define ARRAY_NUM(x) (sizeof(x)/sizeof(x[0]))
+#define MIN(a,b) ((a)<(b)?(a):(b))
+#define MAX(a,b) ((a)>(b)?(a):(b))
 
 static bool LogoMode = true;
 static bool TextMode = true;
@@ -507,14 +509,14 @@ int IRAM_ATTR SetupLine(uint32_t Bank)
 			XStart[1] = ReticuleXPosition[1] - ReticuleSizeLookup[1][CurrentLine - StartingLine[1]];
 			XEnd[0] = XStart[0] + 2 * ReticuleSizeLookup[0][CurrentLine - StartingLine[0]];
 			XEnd[1] = XStart[1] + 2 * ReticuleSizeLookup[1][CurrentLine - StartingLine[1]];
-			int MinPlayer = (XStart[0]<XStart[1]) ? 0 : 1;
+			int MinPlayer = (XStart[0] < XStart[1]) ? 0 : 1;
 			rmt_item32_t HorizontalPulse;
 			HorizontalPulse.level0 = 1;
 			HorizontalPulse.level1 = 0;
-			if (XEnd[MinPlayer] <= XStart[1-MinPlayer]) // Overlapping
+			if (XStart[1-MinPlayer] <= XEnd[MinPlayer]) // Overlapping
 			{
 				HorizontalPulse.duration0 = XStart[MinPlayer];
-				HorizontalPulse.duration1 = XEnd[1 - MinPlayer] - XStart[MinPlayer];
+				HorizontalPulse.duration1 = MAX(XEnd[1 - MinPlayer], XEnd[MinPlayer]) - XStart[MinPlayer];
 				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[0].val = HorizontalPulse.val;
 				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[1].val = EndTerminator.val;
 			}
