@@ -68,14 +68,15 @@ static int LogoTime = 4000;
 static int DisplayTime = 0;
 static bool ShowPointer = true;
 static bool DoingCalibration = false;
+static bool Coop = false;
 static int CurrentLine = 0;
 static int PlayerMask = 0; // Set to 1 for two player
-static int CoopMask = 1; // Set to 0 for co-op play
 static int ReticuleStartLineNum[2] = { 1000,1000 };
 static int ReticuleXPosition[2] = { 320,320 };
 static int ReticuleSizeLookup[2][14];
 static int CalibrationLineOffset = ARRAY_NUM(ReticuleSizeLookup[0])/2;
 static int CalibrationDelay = 0;
+static int LastActivePlayer = 0;
 
 class PlayerInput
 {
@@ -145,7 +146,7 @@ public:
 			{
 				if (!DoingCalibration && (Data->Buttons & WiimoteData::kButton_Plus))
 				{
-					CoopMask = 0;	// Enable co-op
+					Coop = true;
 					ImageData = &ImageCoop[0][0];
 					DisplayTime = 1500;
 					TextMode = true;
@@ -153,7 +154,7 @@ public:
 
 				if (!DoingCalibration && (Data->Buttons & WiimoteData::kButton_Minus))
 				{
-					CoopMask = 1;	// Disable co-op
+					Coop = false;
 					ImageData = &ImageDual[0][0];
 					DisplayTime = 1500;
 					TextMode = true;
@@ -329,6 +330,8 @@ private:
 
 void WiimoteTask(void *pvParameters)
 {
+	bool WasPlayer1Button = false;
+	bool WasPlayer2Button = false;
 	printf("WiimoteTask running on core %d\n", xPortGetCoreID());
 	GWiimoteManager.Init();
 	PlayerInput Player1(0);
@@ -340,16 +343,23 @@ void WiimoteTask(void *pvParameters)
 		Player2.Tick();
 		bool Player1Button = Player1.ButtonWasPressed(WiimoteData::kButton_A | WiimoteData::kButton_B);
 		bool Player2Button = Player2.ButtonWasPressed(WiimoteData::kButton_A | WiimoteData::kButton_B);
-		if (CoopMask == 0)
+		if (Coop)
 		{
 			gpio_set_level(OUT_PLAYER1_TRIGGER_PULLED, Player1Button || Player2Button);
 			gpio_set_level(OUT_PLAYER2_TRIGGER_PULLED, false);
+			if (Player1Button && !WasPlayer1Button)
+				LastActivePlayer = 0;
+			else if (Player2Button && !WasPlayer2Button)
+				LastActivePlayer = 1;
 		}
 		else
 		{
 			gpio_set_level(OUT_PLAYER1_TRIGGER_PULLED, Player1Button);
 			gpio_set_level(OUT_PLAYER2_TRIGGER_PULLED, Player2Button);
+			LastActivePlayer = 0;
 		}
+		WasPlayer1Button = Player1Button;
+		WasPlayer2Button = Player2Button;
 		if (DisplayTime > 0)
 		{
 			DisplayTime--;
@@ -419,6 +429,12 @@ static void RMTPeripheralInit()
 	gpio_set_direction(OUT_SCREEN_DIM_INV, GPIO_MODE_OUTPUT);
 	gpio_set_level(OUT_SCREEN_DIM_INV, 1); // If we turn it off keep high (will be inverted)
 	gpio_matrix_out(OUT_SCREEN_DIM_INV, RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL, false, false);
+
+	// Invert triggers (they are active high)
+	gpio_matrix_out(OUT_PLAYER1_LED, RMT_SIG_OUT0_IDX + RMT_TRIGGER_CHANNEL + 0, true, false);
+	gpio_matrix_out(OUT_PLAYER2_LED, RMT_SIG_OUT0_IDX + RMT_TRIGGER_CHANNEL + 1, true, false);
+	gpio_matrix_out(OUT_PLAYER1_LED_DELAYED, RMT_SIG_OUT0_IDX + RMT_DELAY_TRIGGER_CHANNEL + 0, true, false);
+	gpio_matrix_out(OUT_PLAYER2_LED_DELAYED, RMT_SIG_OUT0_IDX + RMT_DELAY_TRIGGER_CHANNEL + 1, true, false);
 }
 
 #define ActivateRMTOnSyncFallingEdgeAsmInner(Extra, Ident)\
@@ -548,19 +564,25 @@ int IRAM_ATTR SetupLine(uint32_t Bank)
 
 	for (int Player=0; Player<2; Player++)
 	{
-		int Channel = RMT_TRIGGER_CHANNEL + Player;
-		int DelayChannel = RMT_DELAY_TRIGGER_CHANNEL + Player;
-		if (CurrentLine == StartingLine[Player] + CalibrationLineOffset)
+		int SourcePlayer = Player;
+		if (Coop)
 		{
+			SourcePlayer = LastActivePlayer;
+		}
+		if (CurrentLine == StartingLine[SourcePlayer] + CalibrationLineOffset)
+		{
+			int Channel = RMT_TRIGGER_CHANNEL + Player;
+			int DelayChannel = RMT_DELAY_TRIGGER_CHANNEL + Player;
+			int PulseWidth = 20; // 1/4th microsecond
 			rmt_item32_t HorizontalPulse;
 			HorizontalPulse.level0 = 1;
-			HorizontalPulse.duration0 = ReticuleXPosition[Player];
+			HorizontalPulse.duration0 = ReticuleXPosition[SourcePlayer] - PulseWidth/2;
 			HorizontalPulse.level1 = 0;
-			HorizontalPulse.duration1 = 8; // 1/10th microsecond
+			HorizontalPulse.duration1 = PulseWidth;
 			RMTMEM.chan[Channel].data32[0].val = HorizontalPulse.val;
+			RMTMEM.chan[Channel].data32[1].val = EndTerminator.val;
 			HorizontalPulse.duration0 += CalibrationDelay;
 			RMTMEM.chan[DelayChannel].data32[0].val = HorizontalPulse.val;
-			RMTMEM.chan[Channel].data32[1].val = EndTerminator.val;
 			RMTMEM.chan[DelayChannel].data32[1].val = EndTerminator.val;
 			Active |= (2 << Player);
 		}
