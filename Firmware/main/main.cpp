@@ -38,6 +38,9 @@ extern "C"
 #define OUT_PLAYER2_LED_DELAYED (GPIO_NUM_16) // ANDed with detected white level in HW
 #define OUT_PLAYER1_TRIGGER_PULLED (GPIO_NUM_25) // Used for Wiimote-only operation
 #define OUT_PLAYER2_TRIGGER_PULLED (GPIO_NUM_27) // Used for Wiimote-only operation
+#define OUT_WHITE_OVERRIDE (GPIO_NUM_19) // Ignore the white level
+#define OUT_FRONT_PANEL_LED1 (GPIO_NUM_32) // Ignore the white level
+#define OUT_FRONT_PANEL_LED2 (GPIO_NUM_4) // Ignore the white level
 
 #define IN_COMPOSITE_SYNC (GPIO_NUM_21) // Compsite sync input (If changed change also in asm loop)
 
@@ -74,7 +77,6 @@ static int PlayerMask = 0; // Set to 1 for two player
 static int ReticuleStartLineNum[2] = { 1000,1000 };
 static int ReticuleXPosition[2] = { 320,320 };
 static int ReticuleSizeLookup[2][14];
-static int CalibrationLineOffset = ARRAY_NUM(ReticuleSizeLookup[0])/2;
 static int CalibrationDelay = 0;
 static int LastActivePlayer = 0;
 
@@ -332,6 +334,8 @@ void WiimoteTask(void *pvParameters)
 {
 	bool WasPlayer1Button = false;
 	bool WasPlayer2Button = false;
+	bool WasCalibrationDelayUp = false;
+	bool WasCalibrationDelayDown = false;
 	printf("WiimoteTask running on core %d\n", xPortGetCoreID());
 	GWiimoteManager.Init();
 	PlayerInput Player1(0);
@@ -341,6 +345,7 @@ void WiimoteTask(void *pvParameters)
 		GWiimoteManager.Tick();
 		Player1.Tick();
 		Player2.Tick();
+
 		bool Player1Button = Player1.ButtonWasPressed(WiimoteData::kButton_A | WiimoteData::kButton_B);
 		bool Player2Button = Player2.ButtonWasPressed(WiimoteData::kButton_A | WiimoteData::kButton_B);
 		if (Coop)
@@ -360,6 +365,20 @@ void WiimoteTask(void *pvParameters)
 		}
 		WasPlayer1Button = Player1Button;
 		WasPlayer2Button = Player2Button;
+
+		bool CalibrationDelayUp = Player1.ButtonWasPressed(WiimoteData::kButton_Right) || Player2.ButtonWasPressed(WiimoteData::kButton_Right);
+		bool CalibrationDelayDown = Player1.ButtonWasPressed(WiimoteData::kButton_Left) || Player2.ButtonWasPressed(WiimoteData::kButton_Left);
+		if (CalibrationDelayUp && !WasCalibrationDelayUp)
+		{
+			CalibrationDelay += 8; // Up 1/10th of microsecond
+		}
+		else if (CalibrationDelayDown && !WasCalibrationDelayDown)
+		{
+			CalibrationDelay = MAX(CalibrationDelay - 8, 0); // Down 1/10th of microsecond
+		}
+		WasCalibrationDelayUp = CalibrationDelayUp;
+		WasCalibrationDelayDown = CalibrationDelayDown;
+
 		if (DisplayTime > 0)
 		{
 			DisplayTime--;
@@ -569,7 +588,7 @@ int IRAM_ATTR SetupLine(uint32_t Bank)
 		{
 			SourcePlayer = LastActivePlayer;
 		}
-		if (CurrentLine == StartingLine[SourcePlayer] + CalibrationLineOffset)
+		if (CurrentLine == StartingLine[SourcePlayer] + ARRAY_NUM(ReticuleSizeLookup[0])/2)
 		{
 			int Channel = RMT_TRIGGER_CHANNEL + Player;
 			int DelayChannel = RMT_DELAY_TRIGGER_CHANNEL + Player;
@@ -692,16 +711,37 @@ void SpotGeneratorTask(void *pvParameters)
 
 void InitializeMiscGPIO()
 {
-	gpio_config_t TriggerPullOutput;
-	TriggerPullOutput.intr_type = GPIO_INTR_DISABLE;
-	TriggerPullOutput.pin_bit_mask = BIT(OUT_PLAYER1_TRIGGER_PULLED);
-	TriggerPullOutput.mode = GPIO_MODE_OUTPUT;
-	TriggerPullOutput.pull_up_en = GPIO_PULLUP_DISABLE;
-	TriggerPullOutput.pull_down_en = GPIO_PULLDOWN_DISABLE;
-	gpio_config(&TriggerPullOutput);
+	gpio_config_t GPIOConfig;
+	GPIOConfig.intr_type = GPIO_INTR_DISABLE;
+	GPIOConfig.pin_bit_mask = BIT(OUT_PLAYER1_TRIGGER_PULLED);
+	GPIOConfig.mode = GPIO_MODE_OUTPUT;
+	GPIOConfig.pull_up_en = GPIO_PULLUP_DISABLE;
+	GPIOConfig.pull_down_en = GPIO_PULLDOWN_DISABLE;
+	gpio_config(&GPIOConfig);
 
-	TriggerPullOutput.pin_bit_mask = BIT(OUT_PLAYER2_TRIGGER_PULLED);
-	gpio_config(&TriggerPullOutput);
+	GPIOConfig.pin_bit_mask = BIT(OUT_PLAYER2_TRIGGER_PULLED);
+	gpio_config(&GPIOConfig);
+	
+	GPIOConfig.pin_bit_mask = BIT(OUT_WHITE_OVERRIDE);
+	if (false) // Can be helpful. To be improved
+	{
+		gpio_config(&GPIOConfig);
+		gpio_set_level(OUT_WHITE_OVERRIDE, 1); // Force white level high
+	}
+	else
+	{
+		GPIOConfig.mode = GPIO_MODE_INPUT;	// Let white level detect from signal
+		gpio_config(&GPIOConfig);
+	}
+	
+	GPIOConfig.pin_bit_mask = 1ull<<OUT_FRONT_PANEL_LED1;
+	GPIOConfig.mode = GPIO_MODE_OUTPUT;
+	gpio_config(&GPIOConfig);
+	gpio_set_level(OUT_FRONT_PANEL_LED1, 1);
+	
+	GPIOConfig.pin_bit_mask = BIT(OUT_FRONT_PANEL_LED2);
+	gpio_config(&GPIOConfig);
+	gpio_set_level(OUT_FRONT_PANEL_LED2, 1);
 }
 
 extern "C" void app_main(void)
