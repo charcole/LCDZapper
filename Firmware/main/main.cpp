@@ -23,6 +23,7 @@ extern "C"
 #include "driver/gpio.h"
 #include "driver/rmt.h"
 #include "driver/timer.h"
+#include "driver/ledc.h"
 #include "nvs_flash.h"
 };
 #include "esp_wiimote.h"
@@ -47,6 +48,12 @@ extern "C"
 #define RMT_SCREEN_DIM_CHANNEL    	RMT_CHANNEL_1     /*!< RMT channel for screen*/
 #define RMT_TRIGGER_CHANNEL			RMT_CHANNEL_3     /*!< RMT channel for trigger */
 #define RMT_DELAY_TRIGGER_CHANNEL	RMT_CHANNEL_5     /*!< RMT channel for delayed trigger */
+
+#define LEDC_WHITE_LEVEL_TIMER      LEDC_TIMER_0
+#define LEDC_WHITE_LEVEL_MODE       LEDC_HIGH_SPEED_MODE
+#define LEDC_WHITE_LEVEL_GPIO       (GPIO_NUM_13)
+#define LEDC_WHITE_LEVEL_CHANNEL    LEDC_CHANNEL_0
+#define WHITE_LEVEL_STEP			250				  // About 0.1V steps
 
 // Change these if using with NTSC
 #define TIMING_RETICULE_WIDTH 75.0f // Generates a circle in PAL but might need adjusting for NTSC (In 80ths of a microsecond)
@@ -79,6 +86,7 @@ static int ReticuleXPosition[2] = { 320,320 };
 static int ReticuleSizeLookup[2][14];
 static int CalibrationDelay = 0;
 static int LastActivePlayer = 0;
+static int WhiteLevel = 3330;	// Should produce test voltage of 1.3V (good for composite video)
 
 class PlayerInput
 {
@@ -336,6 +344,8 @@ void WiimoteTask(void *pvParameters)
 	bool WasPlayer2Button = false;
 	bool WasCalibrationDelayUp = false;
 	bool WasCalibrationDelayDown = false;
+	bool WasWhiteLevelChangeUp = true;
+	bool WasWhiteLevelChangeDown = true;
 	printf("WiimoteTask running on core %d\n", xPortGetCoreID());
 	GWiimoteManager.Init();
 	PlayerInput Player1(0);
@@ -378,6 +388,39 @@ void WiimoteTask(void *pvParameters)
 		}
 		WasCalibrationDelayUp = CalibrationDelayUp;
 		WasCalibrationDelayDown = CalibrationDelayDown;
+	
+		bool WhiteLevelChangeUp = Player1.ButtonWasPressed(WiimoteData::kButton_One) || Player2.ButtonWasPressed(WiimoteData::kButton_One);
+		bool WhiteLevelChangeDown = Player1.ButtonWasPressed(WiimoteData::kButton_Two) || Player2.ButtonWasPressed(WiimoteData::kButton_Two);
+		if (WhiteLevelChangeDown && !WasWhiteLevelChangeDown)
+		{
+			if (WhiteLevel > 0)
+			{
+				WhiteLevel -= WHITE_LEVEL_STEP;
+				if (WhiteLevel < 0)
+				{
+					gpio_set_direction(OUT_WHITE_OVERRIDE, GPIO_MODE_OUTPUT);
+					gpio_set_level(OUT_WHITE_OVERRIDE, 1); // Force white level high
+				}
+				else
+				{
+					gpio_set_direction(OUT_WHITE_OVERRIDE, GPIO_MODE_INPUT);
+					ledc_set_duty(LEDC_WHITE_LEVEL_MODE, LEDC_WHITE_LEVEL_CHANNEL, WhiteLevel);
+					ledc_update_duty(LEDC_WHITE_LEVEL_MODE, LEDC_WHITE_LEVEL_CHANNEL);
+				}
+			}
+		}
+		else if (WhiteLevelChangeUp && !WasWhiteLevelChangeUp)
+		{
+			if (WhiteLevel < (1 << 13) - WHITE_LEVEL_STEP)
+			{
+				WhiteLevel += WHITE_LEVEL_STEP;
+				gpio_set_direction(OUT_WHITE_OVERRIDE, GPIO_MODE_INPUT);
+				ledc_set_duty(LEDC_WHITE_LEVEL_MODE, LEDC_WHITE_LEVEL_CHANNEL, WhiteLevel);
+				ledc_update_duty(LEDC_WHITE_LEVEL_MODE, LEDC_WHITE_LEVEL_CHANNEL);
+			}
+		}
+		WasWhiteLevelChangeDown = WhiteLevelChangeDown;
+		WasWhiteLevelChangeUp = WhiteLevelChangeUp;
 
 		if (DisplayTime > 0)
 		{
@@ -454,6 +497,27 @@ static void RMTPeripheralInit()
 	gpio_matrix_out(OUT_PLAYER2_LED, RMT_SIG_OUT0_IDX + RMT_TRIGGER_CHANNEL + 1, true, false);
 	gpio_matrix_out(OUT_PLAYER1_LED_DELAYED, RMT_SIG_OUT0_IDX + RMT_DELAY_TRIGGER_CHANNEL + 0, true, false);
 	gpio_matrix_out(OUT_PLAYER2_LED_DELAYED, RMT_SIG_OUT0_IDX + RMT_DELAY_TRIGGER_CHANNEL + 1, true, false);
+}
+
+static void PWMPeripherialInit()
+{
+	ledc_timer_config_t WhiteLevelPWMTimer;
+	WhiteLevelPWMTimer.bit_num = LEDC_TIMER_13_BIT;
+	WhiteLevelPWMTimer.freq_hz = 9000;
+	WhiteLevelPWMTimer.speed_mode = LEDC_WHITE_LEVEL_MODE;
+	WhiteLevelPWMTimer.timer_num = LEDC_WHITE_LEVEL_TIMER;
+	ledc_timer_config(&WhiteLevelPWMTimer);
+
+	ledc_channel_config_t WhiteLevelPWMConfig;
+	WhiteLevelPWMConfig.channel    = LEDC_WHITE_LEVEL_CHANNEL;
+	WhiteLevelPWMConfig.duty       = 0;
+	WhiteLevelPWMConfig.gpio_num   = LEDC_WHITE_LEVEL_GPIO;
+	WhiteLevelPWMConfig.speed_mode = LEDC_WHITE_LEVEL_MODE;
+	WhiteLevelPWMConfig.timer_sel  = LEDC_WHITE_LEVEL_TIMER;
+	ledc_channel_config(&WhiteLevelPWMConfig);
+
+	ledc_set_duty(LEDC_WHITE_LEVEL_MODE, LEDC_WHITE_LEVEL_CHANNEL, WhiteLevel);
+	ledc_update_duty(LEDC_WHITE_LEVEL_MODE, LEDC_WHITE_LEVEL_CHANNEL);
 }
 
 #define ActivateRMTOnSyncFallingEdgeAsmInner(Extra, Ident)\
@@ -671,6 +735,8 @@ void SpotGeneratorTask(void *pvParameters)
 		ReticuleSizeLookup[1][i] = TIMING_RETICULE_WIDTH*x;
 	}
 
+	PWMPeripherialInit();
+
 	RMTPeripheralInit();
 	rmt_item32_t RMTInitialValues[1];
 	RMTInitialValues[0].level0 = 1;
@@ -723,16 +789,9 @@ void InitializeMiscGPIO()
 	gpio_config(&GPIOConfig);
 	
 	GPIOConfig.pin_bit_mask = BIT(OUT_WHITE_OVERRIDE);
-	if (false) // Can be helpful. To be improved
-	{
-		gpio_config(&GPIOConfig);
-		gpio_set_level(OUT_WHITE_OVERRIDE, 1); // Force white level high
-	}
-	else
-	{
-		GPIOConfig.mode = GPIO_MODE_INPUT;	// Let white level detect from signal
-		gpio_config(&GPIOConfig);
-	}
+	GPIOConfig.mode = GPIO_MODE_INPUT;	// Let white level detect from signal
+	gpio_config(&GPIOConfig);
+	gpio_set_level(OUT_WHITE_OVERRIDE, 1); // Force white level high when used as output
 	
 	GPIOConfig.pin_bit_mask = 1ull<<OUT_FRONT_PANEL_LED1;
 	GPIOConfig.mode = GPIO_MODE_OUTPUT;
