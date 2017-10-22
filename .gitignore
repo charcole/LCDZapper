@@ -2,4 +2,6 @@
 .DS_Store
 build/
 sdkconfig.old
+*.bak
+*-bak
 

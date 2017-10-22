@@ -1,0 +1,182 @@
+EESchema Schematic File Version 2
+LIBS:power
+LIBS:device
+LIBS:transistors
+LIBS:conn
+LIBS:linear
+LIBS:regul
+LIBS:74xx
+LIBS:cmos4000
+LIBS:adc-dac
+LIBS:memory
+LIBS:xilinx
+LIBS:microcontrollers
+LIBS:dsp
+LIBS:microchip
+LIBS:analog_switches
+LIBS:motorola
+LIBS:texas
+LIBS:intel
+LIBS:audio
+LIBS:interface
+LIBS:digital-audio
+LIBS:philips
+LIBS:display
+LIBS:cypress
+LIBS:siliconi
+LIBS:opto
+LIBS:atmel
+LIBS:contrib
+LIBS:valves
+LIBS:FrontPanel-cache
+EELAYER 25 0
+EELAYER END
+$Descr A4 11693 8268
+encoding utf-8
+Sheet 1 1
+Title ""
+Date ""
+Rev ""
+Comp ""
+Comment1 ""
+Comment2 ""
+Comment3 ""
+Comment4 ""
+$EndDescr
+$Comp
+L GND #PWR01
+U 1 1 59BE34C4
+P 4600 3300
+F 0 "#PWR01" H 4600 3050 50  0001 C CNN
+F 1 "GND" H 4600 3150 50  0000 C CNN
+F 2 "" H 4600 3300 50  0001 C CNN
+F 3 "" H 4600 3300 50  0001 C CNN
+	1    4600 3300
+	1    0    0    -1  
+$EndComp
+$Comp
+L LED D2
+U 1 1 59BE34D8
+P 4350 2800
+F 0 "D2" H 4350 2900 50  0000 C CNN
+F 1 "LED" H 4350 2700 50  0000 C CNN
+F 2 "LEDs:LED-5MM" H 4350 2800 50  0001 C CNN
+F 3 "" H 4350 2800 50  0001 C CNN
+	1    4350 2800
+	0    -1   -1   0   
+$EndComp
+$Comp
+L LED D1
+U 1 1 59BE3526
+P 4350 2350
+F 0 "D1" H 4350 2450 50  0000 C CNN
+F 1 "LED" H 4350 2250 50  0000 C CNN
+F 2 "LEDs:LED-5MM" H 4350 2350 50  0001 C CNN
+F 3 "" H 4350 2350 50  0001 C CNN
+	1    4350 2350
+	0    -1   -1   0   
+$EndComp
+$Comp
+L LED D4
+U 1 1 59BE3593
+P 4850 2800
+F 0 "D4" H 4850 2900 50  0000 C CNN
+F 1 "LED" H 4850 2700 50  0000 C CNN
+F 2 "LEDs:LED-5MM" H 4850 2800 50  0001 C CNN
+F 3 "" H 4850 2800 50  0001 C CNN
+	1    4850 2800
+	0    -1   -1   0   
+$EndComp
+$Comp
+L LED D3
+U 1 1 59BE3599
+P 4850 2350
+F 0 "D3" H 4850 2450 50  0000 C CNN
+F 1 "LED" H 4850 2250 50  0000 C CNN
+F 2 "LEDs:LED-5MM" H 4850 2350 50  0001 C CNN
+F 3 "" H 4850 2350 50  0001 C CNN
+	1    4850 2350
+	0    -1   -1   0   
+$EndComp
+$Comp
+L R R1
+U 1 1 59BE35B1
+P 4350 1900
+F 0 "R1" V 4430 1900 50  0000 C CNN
+F 1 "33" V 4350 1900 50  0000 C CNN
+F 2 "Resistors_SMD:R_1206_HandSoldering" V 4280 1900 50  0001 C CNN
+F 3 "" H 4350 1900 50  0001 C CNN
+	1    4350 1900
+	1    0    0    -1  
+$EndComp
+$Comp
+L R R2
+U 1 1 59BE35F5
+P 4850 1900
+F 0 "R2" V 4930 1900 50  0000 C CNN
+F 1 "33" V 4850 1900 50  0000 C CNN
+F 2 "Resistors_SMD:R_1206_HandSoldering" V 4780 1900 50  0001 C CNN
+F 3 "" H 4850 1900 50  0001 C CNN
+	1    4850 1900
+	1    0    0    -1  
+$EndComp
+Wire Wire Line
+	4350 2950 4350 3100
+Wire Wire Line
+	4350 3100 4850 3100
+Wire Wire Line
+	4850 3100 4850 2950
+Wire Wire Line
+	4350 2650 4350 2500
+Wire Wire Line
+	4350 2200 4350 2050
+Wire Wire Line
+	4850 2200 4850 2050
+Wire Wire Line
+	4850 2650 4850 2500
+Wire Wire Line
+	4600 3100 4600 3300
+Connection ~ 4600 3100
+Wire Wire Line
+	4350 1750 4350 1550
+Wire Wire Line
+	4350 1550 4850 1550
+Wire Wire Line
+	4850 1550 4850 1750
+$Comp
+L +5V #PWR02
+U 1 1 59BE36AA
+P 4600 1300
+F 0 "#PWR02" H 4600 1150 50  0001 C CNN
+F 1 "+5V" H 4600 1440 50  0000 C CNN
+F 2 "" H 4600 1300 50  0001 C CNN
+F 3 "" H 4600 1300 50  0001 C CNN
+	1    4600 1300
+	1    0    0    -1  
+$EndComp
+Wire Wire Line
+	4600 1300 4600 1550
+Connection ~ 4600 1550
+$Comp
+L TEST_1P J1
+U 1 1 59BE3876
+P 4850 1550
+F 0 "J1" H 4850 1820 50  0000 C CNN
+F 1 "5V" H 4850 1750 50  0000 C CNN
+F 2 "Measurement_Points:Measurement_Point_Square-SMD-Pad_Big" H 5050 1550 50  0001 C CNN
+F 3 "" H 5050 1550 50  0001 C CNN
+	1    4850 1550
+	1    0    0    -1  
+$EndComp
+$Comp
+L TEST_1P J2
+U 1 1 59BE3902
+P 4850 3100
+F 0 "J2" H 4850 3370 50  0000 C CNN
+F 1 "GND" H 4850 3300 50  0000 C CNN
+F 2 "Measurement_Points:Measurement_Point_Square-SMD-Pad_Big" H 5050 3100 50  0001 C CNN
+F 3 "" H 5050 3100 50  0001 C CNN
+	1    4850 3100
+	-1   0    0    1   
+$EndComp
+$EndSCHEMATC

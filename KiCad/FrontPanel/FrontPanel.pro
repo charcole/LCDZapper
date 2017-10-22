@@ -1,4 +1,4 @@
-update=Thursday, 10 August 2017 'amt' 08:20:13
+update=Monday, 11 September 2017 'pmt' 21:43:42
 version=1
 last_client=kicad
 [pcbnew]
@@ -23,8 +23,6 @@ ModuleOutlineThickness=0.150000000000
 [cvpcb]
 version=1
 NetIExt=net
-[general]
-version=1
 [eeschema]
 version=1
 LibDir=
@@ -58,8 +56,5 @@ LibName26=opto
 LibName27=atmel
 LibName28=contrib
 LibName29=valves
-LibName30=/Users/charlie/Documents/Kicad/Libraries/lm1881
-LibName31=/Users/charlie/Documents/Kicad/Libraries/ESP32-Footprints/ESP32-footprints-Shem-Lib
-LibName32=switches
-LibName33=video
-LibName34=/Users/charlie/Documents/Kicad/Libraries/rca_switch
+[general]
+version=1
