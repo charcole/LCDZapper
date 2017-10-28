@@ -139,12 +139,12 @@ $EndComp
 $Comp
 L R R15
 U 1 1 58E56C74
-P 3950 5700
-F 0 "R15" V 4030 5700 50  0000 C CNN
-F 1 "220" V 3950 5700 50  0000 C CNN
-F 2 "Resistors_SMD:R_1206_HandSoldering" V 3880 5700 50  0001 C CNN
-F 3 "" H 3950 5700 50  0001 C CNN
-	1    3950 5700
+P 3950 6100
+F 0 "R15" V 4030 6100 50  0000 C CNN
+F 1 "220" V 3950 6100 50  0000 C CNN
+F 2 "Resistors_SMD:R_1206_HandSoldering" V 3880 6100 50  0001 C CNN
+F 3 "" H 3950 6100 50  0001 C CNN
+	1    3950 6100
 	1    0    0    -1  
 $EndComp
 Text GLabel 4750 5250 2    60   Input ~ 0
@@ -152,12 +152,12 @@ DIM
 $Comp
 L R_Variable R16
 U 1 1 58E56F4C
-P 3950 6100
-F 0 "R16" V 4050 6000 50  0000 L CNN
-F 1 "1K" V 3850 6050 50  0000 L CNN
-F 2 "Potentiometers:Potentiometer_Bourns_3296W_3-8Zoll_Inline_ScrewUp" V 3880 6100 50  0001 C CNN
-F 3 "" H 3950 6100 50  0001 C CNN
-	1    3950 6100
+P 3950 5700
+F 0 "R16" V 4050 5600 50  0000 L CNN
+F 1 "500" V 3850 5650 50  0000 L CNN
+F 2 "Potentiometers:Potentiometer_Bourns_3296W_3-8Zoll_Inline_ScrewUp" V 3880 5700 50  0001 C CNN
+F 3 "" H 3950 5700 50  0001 C CNN
+	1    3950 5700
 	1    0    0    -1  
 $EndComp
 $Comp
@@ -707,8 +707,8 @@ $Comp
 L C C9
 U 1 1 59885DD3
 P 8550 4100
-F 0 "C9" H 8575 4200 50  0000 L CNN
-F 1 "0.1u" H 8575 4000 50  0000 L CNN
+F 0 "C9" V 8600 4150 50  0000 L CNN
+F 1 "0.1u" V 8500 4150 50  0000 L CNN
 F 2 "Capacitors_SMD:C_1206_HandSoldering" H 8588 3950 50  0001 C CNN
 F 3 "" H 8550 4100 50  0001 C CNN
 	1    8550 4100
@@ -1028,7 +1028,7 @@ F 3 "" H 8350 4600 50  0001 C CNN
 	1    8350 4600
 	1    0    0    -1  
 $EndComp
-Text Notes 8300 4650 1    39   ~ 0
+Text Notes 8250 4650 1    39   ~ 0
 Don't Populate
 $Comp
 L GND #PWR036
@@ -1791,7 +1791,7 @@ Wire Wire Line
 	5100 6250 5150 6250
 Wire Wire Line
 	4750 6250 4800 6250
-Text Notes 4850 6200 0    39   ~ 0
+Text Notes 4850 6150 0    39   ~ 0
 AC/DC
 $Comp
 L C C18
@@ -2947,4 +2947,51 @@ F 3 "" H 16050 4900 50  0001 C CNN
 $EndComp
 Wire Wire Line
 	15850 4900 15900 4900
+Text Notes 3900 5550 0    39   ~ 0
+Choose One
+$Comp
+L R R?
+U 1 1 59F58EB1
+P 4200 5700
+F 0 "R?" V 4280 5700 50  0000 C CNN
+F 1 "22" V 4200 5700 50  0000 C CNN
+F 2 "" V 4130 5700 50  0001 C CNN
+F 3 "" H 4200 5700 50  0001 C CNN
+	1    4200 5700
+	1    0    0    -1  
+$EndComp
+Wire Wire Line
+	4200 5550 4200 5450
+Wire Wire Line
+	4200 5450 3950 5450
+Connection ~ 3950 5450
+Wire Wire Line
+	4200 5850 4200 5900
+Wire Wire Line
+	4200 5900 3950 5900
+Connection ~ 3950 5900
+Wire Notes Line
+	3800 5550 3800 5850
+Wire Notes Line
+	3800 5850 4350 5850
+Wire Notes Line
+	4350 5850 4350 5550
+Wire Notes Line
+	4350 5550 3800 5550
+Wire Notes Line
+	4800 6150 4800 6600
+Wire Notes Line
+	4800 6600 5100 6600
+Wire Notes Line
+	5100 6600 5100 6150
+Wire Notes Line
+	5100 6150 4800 6150
+Wire Notes Line
+	8450 4250 8250 4250
+Wire Notes Line
+	8250 4250 8250 4550
+Wire Notes Line
+	8250 4550 8450 4550
+Wire Notes Line
+	8450 4550 8450 4250
 $EndSCHEMATC
