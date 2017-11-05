@@ -564,10 +564,9 @@ void IRAM_ATTR ActivateRMTOnSyncFallingEdge(uint32_t Bank, int Active)
 	}
 }
 
-int IRAM_ATTR SetupLine(uint32_t Bank)
+int IRAM_ATTR SetupLine(uint32_t Bank, const int *StartingLine)
 {
 	int Active = 0;
-	int StartingLine[2] = { ReticuleStartLineNum[0], ReticuleStartLineNum[1] };
 
 	rmt_item32_t EndTerminator;
 	EndTerminator.level0 = 1;
@@ -681,7 +680,7 @@ void IRAM_ATTR DoOutputSelection(uint32_t Bank)
 	WRITE_PERI_REG(OUT_SCREEN_DIM_INV_SELECTION_REG, (RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL + Bank) << GPIO_FUNC0_OUT_SEL_S);
 }
 
-void IRAM_ATTR CompositeSyncPositiveEdge(uint32_t &Bank, int &Active)
+void IRAM_ATTR CompositeSyncPositiveEdge(uint32_t &Bank, int &Active, const int *CachedStartingLines)
 {
 	if (Active != 0 && CurrentLine != 0)
 	{
@@ -690,7 +689,7 @@ void IRAM_ATTR CompositeSyncPositiveEdge(uint32_t &Bank, int &Active)
 	}
 	CurrentLine++;
 	Bank = 1 - Bank;
-	Active = SetupLine(Bank);
+	Active = SetupLine(Bank, CachedStartingLines);
 }
 
 void IRAM_ATTR SpotGeneratorInnerLoop()
@@ -698,6 +697,7 @@ void IRAM_ATTR SpotGeneratorInnerLoop()
 	timer_idx_t timer_idx = TIMER_1;
 	uint32_t Bank = 0;
 	int Active = 0;
+	int CachedStartingLines[2];
 	while (true)
 	{
 		TIMERG1.hw_timer[timer_idx].reload = 1;
@@ -709,10 +709,14 @@ void IRAM_ATTR SpotGeneratorInnerLoop()
 		if (Time > TIMING_VSYNC_THRESHOLD)
 		{
 			CurrentLine = 0;
+			// Cache starting lines as they will be changing on other thread
+			// Otherwise if player moving cursor up we could miss triggering
+			CachedStartingLines[0] = ReticuleStartLineNum[0];
+			CachedStartingLines[1] = ReticuleStartLineNum[1];
 		}
 		else
 		{
-			CompositeSyncPositiveEdge(Bank, Active);
+			CompositeSyncPositiveEdge(Bank, Active, CachedStartingLines);
 		}
 	}
 }
