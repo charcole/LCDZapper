@@ -66,6 +66,13 @@ extern "C"
 #define TEXT_END_LINE (TEXT_START_LINE + 80)
 #define LOGO_START_LINE (TIMING_BLANKED_LINES + 25)
 #define LOGO_END_LINE (LOGO_START_LINE + 200)
+#define MENU_START_MARGIN 100		// In 80th of microsecond
+#define NUM_TEXT_SUBLINES 20		// Vertical resolution of font
+#define NUM_TEXT_ROWS 10			// Num rows of text
+#define NUM_TEXT_COLUMNS 20			// Num characters across screen
+#define NUM_TEXT_BORDER_LINES 2		// Blank lines between lines of text
+#define MENU_START_LINE (TIMING_BLANKED_LINES + 25)
+#define MENU_END_LINE (MENU_START_LINE + NUM_TEXT_ROWS * (NUM_TEXT_SUBLINES + NUM_TEXT_BORDER_LINES))
 
 #define ARRAY_NUM(x) (sizeof(x)/sizeof(x[0]))
 #define MIN(a,b) ((a)<(b)?(a):(b))
@@ -80,6 +87,8 @@ static bool ShowPointer = true;
 static bool DoingCalibration = false;
 static bool Coop = false;
 static int CurrentLine = 0;
+static int CurrentTextLine = 0;
+static int CurrentTextSubLine = 0;
 static int PlayerMask = 0; // Set to 1 for two player
 static int ReticuleStartLineNum[2] = { 1000,1000 };
 static int ReticuleXPosition[2] = { 320,320 };
@@ -87,6 +96,7 @@ static int ReticuleSizeLookup[2][14];
 static int CalibrationDelay = 0;
 static int LastActivePlayer = 0;
 static int WhiteLevel = 3330;	// Should produce test voltage of 1.3V (good for composite video)
+static unsigned char TextBuffer[NUM_TEXT_ROWS][NUM_TEXT_COLUMNS];
 
 class PlayerInput
 {
@@ -643,27 +653,35 @@ int IRAM_ATTR SetupLine(uint32_t Bank, const int *StartingLine)
 			Active = 1;
 		}
 	}
-	else if (CurrentLine>=100 && CurrentLine<120)
+	else if (CurrentLine >= MENU_START_LINE && CurrentLine < MENU_END_LINE)
 	{
-		const char* Message="github.com/charcole";
-		int TextLine=CurrentLine-100;
-		int CurData=0;
-		rmt_item32_t StartingDelay;
-		StartingDelay.level0 = 1;
-		StartingDelay.duration0 = TIMING_BACK_PORCH;
-		StartingDelay.level1 = 1;
-		StartingDelay.duration1 = 80;
-		RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData++].val = StartingDelay.val;
-		for (int Column=0; Column<20; Column++)
+		if (CurrentTextSubLine < NUM_TEXT_SUBLINES)
 		{
-			int Remapped = FontRemap[(unsigned char)Message[Column]];
-			const uint32_t *FontData=Font[Remapped][TextLine];
-			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData++].val = FontData[0];
-			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData++].val = FontData[1];
-			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData++].val = FontData[2];
+			int CurData=0;
+			rmt_item32_t StartingDelay;
+			StartingDelay.level0 = 1;
+			StartingDelay.duration0 = TIMING_BACK_PORCH;
+			StartingDelay.level1 = 1;
+			StartingDelay.duration1 = MENU_START_MARGIN;
+			const unsigned char *Message = TextBuffer[CurrentTextLine];
+			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData++].val = StartingDelay.val;
+			for (int Column = 0; Column < NUM_TEXT_COLUMNS; Column++)
+			{
+				int Remapped = Message[Column];
+				const uint32_t *FontData=Font[Remapped][CurrentTextSubLine];
+				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData++].val = FontData[0];
+				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData++].val = FontData[1];
+				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData++].val = FontData[2];
+			}
+			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData++].val = EndTerminator.val;
+			Active = 1;
 		}
-		RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData++].val = EndTerminator.val;
-		Active = 1;
+		CurrentTextSubLine++;
+		if (CurrentTextSubLine >= NUM_TEXT_SUBLINES + NUM_TEXT_BORDER_LINES)
+		{
+			CurrentTextSubLine = 0;
+			CurrentTextLine++;
+		}
 	}
 
 	for (int Player=0; Player<2; Player++)
@@ -731,6 +749,8 @@ void IRAM_ATTR SpotGeneratorInnerLoop()
 		if (Time > TIMING_VSYNC_THRESHOLD)
 		{
 			CurrentLine = 0;
+			CurrentTextLine = 0;
+			CurrentTextSubLine = 0;
 			// Cache starting lines as they will be changing on other thread
 			// Otherwise if player moving cursor up we could miss triggering
 			CachedStartingLines[0] = ReticuleStartLineNum[0];
@@ -829,6 +849,30 @@ void InitializeMiscGPIO()
 	gpio_set_level(OUT_FRONT_PANEL_LED2, 1);
 }
 
+void ConvertText(const char *Text, int Row, int Column)
+{
+	while (*Text)
+	{
+		char Character = *(Text++);
+		unsigned char Remapped = FontRemap[(unsigned char)Character];
+		TextBuffer[Row][Column++] = Remapped;
+	}
+}
+
+void InitializeMenu()
+{
+	ConvertText("   CONFIGURE MENU   ", 0, 0);
+	ConvertText("                    ", 1, 0);
+	ConvertText("+CURSOR SIZE: OFF   ", 2, 0);
+	ConvertText(" 2 PLAYER:    CO OP ", 3, 0);
+	ConvertText(" DELAY:       1.0us ", 4, 0);
+	ConvertText(" WHITE LEVEL: 1.3V  ", 5, 0);
+	ConvertText(" IO TYPE:     NORMAL", 6, 0);
+	ConvertText(" START CALIBRATION  ", 7, 0);
+	ConvertText(" RESET CALIBRATION  ", 8, 0);
+	ConvertText(" EXIT               ", 9, 0);
+}
+
 extern "C" void app_main(void)
 {
 	// Magic non-sense to make second core work
@@ -836,6 +880,7 @@ extern "C" void app_main(void)
 	nvs_flash_init();
 
 	InitializeMiscGPIO();
+	InitializeMenu();
 
 	xTaskCreatePinnedToCore(&WiimoteTask, "WiimoteTask", 8192, NULL, 5, NULL, 0);
 	xTaskCreatePinnedToCore(&SpotGeneratorTask, "SpotGeneratorTask", 2048, NULL, 5, NULL, 1);
