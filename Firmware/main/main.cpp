@@ -643,6 +643,28 @@ int IRAM_ATTR SetupLine(uint32_t Bank, const int *StartingLine)
 			Active = 1;
 		}
 	}
+	else if (CurrentLine>=100 && CurrentLine<120)
+	{
+		const char* Message="github.com/charcole";
+		int TextLine=CurrentLine-100;
+		int CurData=0;
+		rmt_item32_t StartingDelay;
+		StartingDelay.level0 = 1;
+		StartingDelay.duration0 = TIMING_BACK_PORCH;
+		StartingDelay.level1 = 1;
+		StartingDelay.duration1 = 80;
+		RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData++].val = StartingDelay.val;
+		for (int Column=0; Column<20; Column++)
+		{
+			int Remapped = FontRemap[(unsigned char)Message[Column]];
+			const uint32_t *FontData=Font[Remapped][TextLine];
+			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData++].val = FontData[0];
+			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData++].val = FontData[1];
+			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData++].val = FontData[2];
+		}
+		RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData++].val = EndTerminator.val;
+		Active = 1;
+	}
 
 	for (int Player=0; Player<2; Player++)
 	{
