@@ -82,9 +82,7 @@ enum EUIState
 {
 	kUIState_Playing,
 	kUIState_InMenu,
-	kUIState_CalibrationMode,
-	kUIState_Logo,
-	kUIState_AwaitingSync
+	kUIState_CalibrationMode
 };
 
 enum MenuControl
@@ -107,9 +105,7 @@ static bool LogoMode = true;
 static bool TextMode = true;
 static uint32_t *ImageData = &ImagePress12[0][0];
 static int LogoTime = 4000;
-static int DisplayTime = 0;
 static bool ShowPointer = true;
-static bool DoingCalibration = false;
 static int Coop = 0;
 static int CurrentLine = 0;
 static int CurrentTextLine = 0;
@@ -120,11 +116,11 @@ static int ReticuleXPosition[2] = { 320,320 };
 static int ReticuleSizeLookup[2][14];
 static int CalibrationDelay = 0;
 static int LastActivePlayer = 0;
-static int WhiteLevel = 3330;	// Should produce test voltage of 1.3V (good for composite video)
+static int WhiteLevel = 3225;	// Should produce test voltage of 1.3V (good for composite video)
 static unsigned char TextBuffer[NUM_TEXT_ROWS][NUM_TEXT_COLUMNS];
 
-bool MenuInput(MenuControl Input);
-void SetReticuleSize();
+bool MenuInput(MenuControl Input, class PlayerInput *MenuPlayer);
+void SetMenuState();
 
 class PlayerInput
 {
@@ -174,56 +170,29 @@ public:
 		{
 			FrameNumber = Data->FrameNumber;
 
-			if (CalibrationPhase < 4 && ButtonClicked(Data->Buttons, (WiimoteData::kButton_B | WiimoteData::kButton_A)))
+			if (UIState == kUIState_CalibrationMode && CalibrationPhase < 4)
 			{
-				if (Data->IRSpot[0].X != 0x3FF || Data->IRSpot[0].Y != 0x3FF)
+				if (ButtonClicked(Data->Buttons, (WiimoteData::kButton_B | WiimoteData::kButton_A)))
 				{
-					CalibrationData[CalibrationPhase].X = (float)Data->IRSpot[0].X;
-					CalibrationData[CalibrationPhase].Y = (float)Data->IRSpot[0].Y;
-					CalibrationPhase++;
-					DoneCalibration = (CalibrationPhase == 4);
-					DoingCalibration = !DoneCalibration;
+					if (Data->IRSpot[0].X != 0x3FF || Data->IRSpot[0].Y != 0x3FF)
+					{
+						CalibrationData[CalibrationPhase].X = (float)Data->IRSpot[0].X;
+						CalibrationData[CalibrationPhase].Y = (float)Data->IRSpot[0].Y;
+						CalibrationPhase++;
+						DoneCalibration = (CalibrationPhase == 4);
+						if (DoneCalibration)
+						{
+							UIState = kUIState_Playing;
+						}
+					}
+				}
+				else if (ButtonClicked(Data->Buttons, WiimoteData::kButton_Home))
+				{
+					ResetCalibration();
 				}
 			}
 
-			if (PlayerMask != 0)
-			{
-				if (!DoingCalibration && (Data->Buttons & WiimoteData::kButton_Plus))
-				{
-					Coop = 1;
-					ImageData = &ImageCoop[0][0];
-					DisplayTime = 1500;
-					TextMode = true;
-				}
-
-				if (!DoingCalibration && (Data->Buttons & WiimoteData::kButton_Minus))
-				{
-					Coop = 0;
-					ImageData = &ImageDual[0][0];
-					DisplayTime = 1500;
-					TextMode = true;
-				}
-			}
-
-			if (Data->Buttons & WiimoteData::kButton_Up)
-			{
-				if (CalibrationPhase != 4)
-				{
-					CalibrationPhase = 4;
-					DoingCalibration = false;
-				}
-				DoneCalibration = false;
-			}
-			
-			if (!DoingCalibration && (Data->Buttons & WiimoteData::kButton_Down))
-			{
-				CalibrationPhase = 0;
-				DoneCalibration = false;
-				DoingCalibration = true;
-				DisplayTime = 0;
-			}
-
-			if (CalibrationPhase < 4)
+			if (UIState == kUIState_CalibrationMode && CalibrationPhase < 4)
 			{
 				ImageData = &ImageAim[0][0];
 				TextMode = true;
@@ -291,7 +260,7 @@ public:
 				{
 					TextMode = false;	// Turn off sync message once connected
 				}
-				else if (!DoingCalibration && DisplayTime <= 0)
+				else if (UIState != kUIState_CalibrationMode)
 				{
 					TextMode = false;	// Turn off calibration message
 				}
@@ -309,6 +278,20 @@ public:
 	bool ButtonWasPressed(int ButtonSelect)
 	{
 		return (OldButtons & ButtonSelect) != 0;
+	}
+
+	void ResetCalibration()
+	{
+		CalibrationPhase = 4;
+		DoneCalibration = false;
+		UIState = kUIState_Playing;
+	}
+		
+	void StartCalibration()
+	{
+		CalibrationPhase = 0;
+		DoneCalibration = false;
+		UIState = kUIState_CalibrationMode;
 	}
 
 private:
@@ -401,35 +384,32 @@ void WiimoteTask(void *pvParameters)
 		{
 			MenuControl CurrentMenuControl = kMenu_None;
 
-			CurrentMenuControl = kMenu_None;
-			if (Player1.ButtonWasPressed(WiimoteData::kButton_Down) || Player2.ButtonWasPressed(WiimoteData::kButton_Down))
-				CurrentMenuControl = kMenu_Down;
-			else if (Player1.ButtonWasPressed(WiimoteData::kButton_Up) || Player2.ButtonWasPressed(WiimoteData::kButton_Up))
-				CurrentMenuControl = kMenu_Up;
-			else if (Player1.ButtonWasPressed(WiimoteData::kButton_Left) || Player2.ButtonWasPressed(WiimoteData::kButton_Left))
-				CurrentMenuControl = kMenu_Left;
-			else if (Player1.ButtonWasPressed(WiimoteData::kButton_Right) || Player2.ButtonWasPressed(WiimoteData::kButton_Right))
-				CurrentMenuControl = kMenu_Right;
-			else if (Player1.ButtonWasPressed(WiimoteData::kButton_A | WiimoteData::kButton_B) || Player2.ButtonWasPressed(WiimoteData::kButton_A | WiimoteData::kButton_B))
-				CurrentMenuControl = kMenu_Select;
-
-			if (MenuInput(CurrentMenuControl))
+			PlayerInput *MenuPlayerInput = nullptr;
+			for (int Player = 0; Player < 2; Player++)
 			{
-				ShowPointer = (CursorSize!=0);
-				SetReticuleSize();
-				CalibrationDelay = DelayDecimal * 8; // 80th of microsecond
-				WhiteLevel = WhiteLevelDecimal * WHITE_LEVEL_STEP;
-				if (WhiteLevel == 0)
+				PlayerInput &Input = (Player == 0) ? Player1 : Player2;
+
+				if (Input.ButtonWasPressed(WiimoteData::kButton_Down))
+					CurrentMenuControl = kMenu_Down;
+				else if (Input.ButtonWasPressed(WiimoteData::kButton_Up))
+					CurrentMenuControl = kMenu_Up;
+				else if (Input.ButtonWasPressed(WiimoteData::kButton_Left))
+					CurrentMenuControl = kMenu_Left;
+				else if (Input.ButtonWasPressed(WiimoteData::kButton_Right))
+					CurrentMenuControl = kMenu_Right;
+				else if (Input.ButtonWasPressed(WiimoteData::kButton_A | WiimoteData::kButton_B))
+					CurrentMenuControl = kMenu_Select;
+
+				if (CurrentMenuControl != kMenu_None)
 				{
-					gpio_set_direction(OUT_WHITE_OVERRIDE, GPIO_MODE_OUTPUT);
-					gpio_set_level(OUT_WHITE_OVERRIDE, 1); // Force white level high
+					MenuPlayerInput = &Input;
+					break;
 				}
-				else
-				{
-					gpio_set_direction(OUT_WHITE_OVERRIDE, GPIO_MODE_INPUT);
-					ledc_set_duty(LEDC_WHITE_LEVEL_MODE, LEDC_WHITE_LEVEL_CHANNEL, WhiteLevel);
-					ledc_update_duty(LEDC_WHITE_LEVEL_MODE, LEDC_WHITE_LEVEL_CHANNEL);
-				}
+			}
+
+			if (MenuInput(CurrentMenuControl, MenuPlayerInput))
+			{
+				SetMenuState();
 			}
 		}
 
@@ -453,10 +433,6 @@ void WiimoteTask(void *pvParameters)
 		WasPlayer1Button = Player1Button;
 		WasPlayer2Button = Player2Button;
 
-		if (DisplayTime > 0)
-		{
-			DisplayTime--;
-		}
 		if (LogoTime > 0)
 		{
 			LogoTime--;
@@ -635,7 +611,7 @@ int IRAM_ATTR SetupLine(uint32_t Bank, const int *StartingLine)
 			CurrentTextLine++;
 		}
 	}
-	else if (ShowPointer)
+	else if (UIState == kUIState_CalibrationMode || ShowPointer)
 	{
 		bool bPlayerVisibleOnLine[2];
 		bPlayerVisibleOnLine[0] = CurrentLine >= StartingLine[0] && CurrentLine < StartingLine[0] + ARRAY_NUM(ReticuleSizeLookup[0]);
@@ -799,7 +775,7 @@ void SetReticuleSize()
 	float Scale = 1.0f;
 	switch (CursorSize)
 	{
-		case 0: return; // Off
+		case 0: Scale = 1.00f; break; // Off (Will be shown during calibration)
 		case 1: Scale = 0.25f; break; // Small
 		case 2: Scale = 0.50f; break; // Medium
 		case 3: Scale = 1.00f; break; // Large
@@ -822,6 +798,25 @@ void SetReticuleSize()
 			ReticuleSizeLookup[0][i] = 0;
 			ReticuleSizeLookup[1][i] = 0;
 		}
+	}
+}
+
+void SetMenuState()
+{
+	ShowPointer = (CursorSize != 0);
+	SetReticuleSize();
+	CalibrationDelay = DelayDecimal * 8; // 80th of microsecond
+	WhiteLevel = WhiteLevelDecimal * WHITE_LEVEL_STEP;
+	if (WhiteLevel == 0)
+	{
+		gpio_set_direction(OUT_WHITE_OVERRIDE, GPIO_MODE_OUTPUT);
+		gpio_set_level(OUT_WHITE_OVERRIDE, 1); // Force white level high
+	}
+	else
+	{
+		gpio_set_direction(OUT_WHITE_OVERRIDE, GPIO_MODE_INPUT);
+		ledc_set_duty(LEDC_WHITE_LEVEL_MODE, LEDC_WHITE_LEVEL_CHANNEL, WhiteLevel);
+		ledc_update_duty(LEDC_WHITE_LEVEL_MODE, LEDC_WHITE_LEVEL_CHANNEL);
 	}
 }
 
@@ -996,10 +991,8 @@ MenuControl AutoRepeat(MenuControl Input)
 	return Input;
 }
 
-bool MenuInput(MenuControl Input)
+bool MenuInput(MenuControl Input, PlayerInput *MenuPlayer)
 {
-	bool DoneCalibration = false; // TO FIX!
-
 	Input = AutoRepeat(Input);
 	if (Input != kMenu_None)
 	{
@@ -1016,13 +1009,15 @@ bool MenuInput(MenuControl Input)
 		{
 			switch (SelectedRow)
 			{
-				case 7: bDirty |= true; DoneCalibration = false; UIState = kUIState_CalibrationMode; break;
-				case 8: bDirty |= true; DoneCalibration = false; break;
+				case 7: bDirty |= true; MenuPlayer->StartCalibration(); break;
+				case 8: bDirty |= true; MenuPlayer->ResetCalibration(); break;
 				case 9: bDirty |= true; UIState = kUIState_Playing; break;
 			}
 		}
 		if (bDirty)
+		{
 			UpdateMenu();
+		}
 		return bDirty;
 	}
 	return false;
@@ -1040,6 +1035,8 @@ void InitializeMenu()
 	ConvertText(" START CALIBRATION  ", 7, 0);
 	ConvertText(" RESET CALIBRATION  ", 8, 0);
 	ConvertText(" EXIT               ", 9, 0);
+	UpdateMenu();
+	SetMenuState();
 }
 
 extern "C" void app_main(void)
