@@ -97,9 +97,9 @@ enum MenuControl
 	kMenu_Select
 };
 
-EUIState UIState = kUIState_AwaitingSync;
-static int CursorSize = 0;
-static int DelayDecimal = 10;
+EUIState UIState = kUIState_Playing;
+static int CursorSize = 3;
+static int DelayDecimal = 0;
 static int WhiteLevelDecimal = 13;
 static int IOType = 0;
 static int SelectedRow = 2;
@@ -124,6 +124,7 @@ static int WhiteLevel = 3330;	// Should produce test voltage of 1.3V (good for c
 static unsigned char TextBuffer[NUM_TEXT_ROWS][NUM_TEXT_COLUMNS];
 
 bool MenuInput(MenuControl Input);
+void SetReticuleSize();
 
 class PlayerInput
 {
@@ -387,7 +388,7 @@ void WiimoteTask(void *pvParameters)
 		Player2.Tick();
 			
 		bool bHomePressed = Player1.ButtonWasPressed(WiimoteData::kButton_Home) || Player2.ButtonWasPressed(WiimoteData::kButton_Home);
-		if (bHomePressed)
+		if (bHomePressed && !WasHomeButton)
 		{
 			if (UIState == kUIState_InMenu)
 				UIState = kUIState_Playing;
@@ -415,6 +416,7 @@ void WiimoteTask(void *pvParameters)
 			if (MenuInput(CurrentMenuControl))
 			{
 				ShowPointer = (CursorSize!=0);
+				SetReticuleSize();
 				CalibrationDelay = DelayDecimal * 8; // 80th of microsecond
 				WhiteLevel = WhiteLevelDecimal * WHITE_LEVEL_STEP;
 				if (WhiteLevel == 0)
@@ -638,6 +640,16 @@ int IRAM_ATTR SetupLine(uint32_t Bank, const int *StartingLine)
 		bool bPlayerVisibleOnLine[2];
 		bPlayerVisibleOnLine[0] = CurrentLine >= StartingLine[0] && CurrentLine < StartingLine[0] + ARRAY_NUM(ReticuleSizeLookup[0]);
 		bPlayerVisibleOnLine[1] = CurrentLine >= StartingLine[1] && CurrentLine < StartingLine[1] + ARRAY_NUM(ReticuleSizeLookup[0]);
+		for (int Player = 0; Player < 2; Player++)
+		{
+			if (bPlayerVisibleOnLine[Player])
+			{
+				if (ReticuleSizeLookup[Player][CurrentLine - StartingLine[Player]] < 4) // Pulses less than 4 cause issues
+				{
+					bPlayerVisibleOnLine[Player] = false;
+				}
+			}
+		}
 		if (LogoMode && CurrentLine >= LOGO_START_LINE && CurrentLine < LOGO_END_LINE)
 		{
 			int LineIdx = CurrentLine - LOGO_START_LINE;
@@ -782,23 +794,44 @@ void IRAM_ATTR SpotGeneratorInnerLoop()
 	}
 }
 
+void SetReticuleSize()
+{
+	float Scale = 1.0f;
+	switch (CursorSize)
+	{
+		case 0: return; // Off
+		case 1: Scale = 0.25f; break; // Small
+		case 2: Scale = 0.50f; break; // Medium
+		case 3: Scale = 1.00f; break; // Large
+	}
+	int ReticuleNumLines = ARRAY_NUM(ReticuleSizeLookup[0]);
+	float ReticuleHalfSize = Scale * ReticuleNumLines / 2.0f;
+	float ReticuleMiddle = (ReticuleNumLines - 1) / 2.0f;
+	for (int i = 0; i < ReticuleNumLines; i++)
+	{
+		float y = (i - ReticuleMiddle) / ReticuleHalfSize;
+		if (y * y < 1.0f)
+		{
+			float x = sqrtf(1.0f - y*y);
+			ReticuleSizeLookup[0][i] = Scale * TIMING_RETICULE_WIDTH * x;
+			x = 1.0f - fabsf(y);
+			ReticuleSizeLookup[1][i] = Scale * TIMING_RETICULE_WIDTH * x;
+		}
+		else
+		{
+			ReticuleSizeLookup[0][i] = 0;
+			ReticuleSizeLookup[1][i] = 0;
+		}
+	}
+}
+
 void SpotGeneratorTask(void *pvParameters)
 {
 	printf("SpotGeneratorTask starting on core %d\n", xPortGetCoreID());
 
 	ESP_ERROR_CHECK(gpio_set_direction(IN_COMPOSITE_SYNC, GPIO_MODE_INPUT));
 
-	int ReticuleNumLines = ARRAY_NUM(ReticuleSizeLookup[0]);
-	float ReticuleHalfSize = ReticuleNumLines / 2.0f;
-	float ReticuleMiddle = (ReticuleNumLines - 1) / 2.0f;
-	for (int i = 0; i < ReticuleNumLines; i++)
-	{
-		float y = (i - ReticuleMiddle) / ReticuleHalfSize;
-		float x = sqrtf(1.0f - y*y);
-		ReticuleSizeLookup[0][i] = TIMING_RETICULE_WIDTH*x;
-		x = 1.0f - fabsf(y);
-		ReticuleSizeLookup[1][i] = TIMING_RETICULE_WIDTH*x;
-	}
+	SetReticuleSize();
 
 	PWMPeripherialInit();
 
@@ -942,7 +975,7 @@ MenuControl AutoRepeat(MenuControl Input)
 	if (Input == kMenu_None || Last != Input)
 	{
 		Last = Input;
-		RepeatTimer = 40;
+		RepeatTimer = 400;
 		Repeat = RepeatTimer;
 	}
 	else
@@ -954,7 +987,9 @@ MenuControl AutoRepeat(MenuControl Input)
 		}
 		else
 		{
-			RepeatTimer = (RepeatTimer / 4) * 3;
+			RepeatTimer = (RepeatTimer / 8) * 7;
+			if (RepeatTimer < 30)
+				RepeatTimer = 30;
 			Repeat = RepeatTimer;
 		}
 	}
@@ -971,19 +1006,19 @@ bool MenuInput(MenuControl Input)
 		bool bDirty = AdjustRange(Input, kMenu_Up, kMenu_Down, SelectedRow, 2, 9);
 		switch (SelectedRow)
 		{
-			case 2: bDirty = AdjustRange(Input, kMenu_Left, kMenu_Right, CursorSize, 0, 3); break;
-			case 3: bDirty = AdjustRange(Input, kMenu_Left, kMenu_Right, Coop, 0, 1); break;
-			case 4: bDirty = AdjustRange(Input, kMenu_Left, kMenu_Right, DelayDecimal, 0, 99); break;
-			case 5: bDirty = AdjustRange(Input, kMenu_Left, kMenu_Right, WhiteLevelDecimal, 0, 33); break;
-			case 6: bDirty = AdjustRange(Input, kMenu_Left, kMenu_Right, IOType, 0, 2); break;
+			case 2: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, CursorSize, 0, 3); break;
+			case 3: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, Coop, 0, 1); break;
+			case 4: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, DelayDecimal, 0, 99); break;
+			case 5: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, WhiteLevelDecimal, 0, 33); break;
+			case 6: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, IOType, 0, 2); break;
 		}
 		if (Input == kMenu_Select)
 		{
 			switch (SelectedRow)
 			{
-				case 7: bDirty = true; DoneCalibration = false; UIState = kUIState_CalibrationMode; break;
-				case 8: bDirty = true; DoneCalibration = false; break;
-				case 9: bDirty = true; UIState = kUIState_Playing; break;
+				case 7: bDirty |= true; DoneCalibration = false; UIState = kUIState_CalibrationMode; break;
+				case 8: bDirty |= true; DoneCalibration = false; break;
+				case 9: bDirty |= true; UIState = kUIState_Playing; break;
 			}
 		}
 		if (bDirty)
@@ -997,9 +1032,9 @@ void InitializeMenu()
 {
 	ConvertText("   CONFIGURE MENU   ", 0, 0);
 	ConvertText("                    ", 1, 0);
-	ConvertText("+CURSOR SIZE: OFF   ", 2, 0);
-	ConvertText(" 2 PLAYER:    CO OP ", 3, 0);
-	ConvertText(" DELAY:       1.0us ", 4, 0);
+	ConvertText("+CURSOR SIZE: LARGE ", 2, 0);
+	ConvertText(" 2 PLAYER:    VERSUS", 3, 0);
+	ConvertText(" DELAY:       0.0us ", 4, 0);
 	ConvertText(" WHITE LEVEL: 1.3V  ", 5, 0);
 	ConvertText(" IO TYPE:     NORMAL", 6, 0);
 	ConvertText(" START CALIBRATION  ", 7, 0);
