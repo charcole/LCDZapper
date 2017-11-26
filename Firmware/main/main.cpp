@@ -53,7 +53,7 @@ extern "C"
 #define LEDC_WHITE_LEVEL_MODE       LEDC_HIGH_SPEED_MODE
 #define LEDC_WHITE_LEVEL_GPIO       (GPIO_NUM_13)
 #define LEDC_WHITE_LEVEL_CHANNEL    LEDC_CHANNEL_0
-#define WHITE_LEVEL_STEP			250				  // About 0.1V steps
+#define WHITE_LEVEL_STEP			248				  // About 0.1V steps
 
 // Change these if using with NTSC
 #define TIMING_RETICULE_WIDTH 75.0f // Generates a circle in PAL but might need adjusting for NTSC (In 80ths of a microsecond)
@@ -66,27 +66,61 @@ extern "C"
 #define TEXT_END_LINE (TEXT_START_LINE + 80)
 #define LOGO_START_LINE (TIMING_BLANKED_LINES + 25)
 #define LOGO_END_LINE (LOGO_START_LINE + 200)
+#define MENU_START_MARGIN 100		// In 80th of microsecond
+#define NUM_TEXT_SUBLINES 20		// Vertical resolution of font
+#define NUM_TEXT_ROWS 10			// Num rows of text
+#define NUM_TEXT_COLUMNS 20			// Num characters across screen
+#define NUM_TEXT_BORDER_LINES 2		// Blank lines between lines of text
+#define MENU_START_LINE (TIMING_BLANKED_LINES + 25)
+#define MENU_END_LINE (MENU_START_LINE + NUM_TEXT_ROWS * (NUM_TEXT_SUBLINES + NUM_TEXT_BORDER_LINES))
 
 #define ARRAY_NUM(x) (sizeof(x)/sizeof(x[0]))
 #define MIN(a,b) ((a)<(b)?(a):(b))
 #define MAX(a,b) ((a)>(b)?(a):(b))
 
+enum EUIState
+{
+	kUIState_Playing,
+	kUIState_InMenu,
+	kUIState_CalibrationMode
+};
+
+enum MenuControl
+{
+	kMenu_None,
+	kMenu_Up,
+	kMenu_Down,
+	kMenu_Right,
+	kMenu_Left,
+	kMenu_Select
+};
+
+EUIState UIState = kUIState_Playing;
+static int CursorSize = 3;
+static int DelayDecimal = 0;
+static int WhiteLevelDecimal = 13;
+static int IOType = 0;
+static int SelectedRow = 2;
 static bool LogoMode = true;
 static bool TextMode = true;
 static uint32_t *ImageData = &ImagePress12[0][0];
 static int LogoTime = 4000;
-static int DisplayTime = 0;
 static bool ShowPointer = true;
-static bool DoingCalibration = false;
-static bool Coop = false;
+static int Coop = 0;
 static int CurrentLine = 0;
+static int CurrentTextLine = 0;
+static int CurrentTextSubLine = 0;
 static int PlayerMask = 0; // Set to 1 for two player
 static int ReticuleStartLineNum[2] = { 1000,1000 };
 static int ReticuleXPosition[2] = { 320,320 };
 static int ReticuleSizeLookup[2][14];
 static int CalibrationDelay = 0;
 static int LastActivePlayer = 0;
-static int WhiteLevel = 3330;	// Should produce test voltage of 1.3V (good for composite video)
+static int WhiteLevel = 3225;	// Should produce test voltage of 1.3V (good for composite video)
+static unsigned char TextBuffer[NUM_TEXT_ROWS][NUM_TEXT_COLUMNS];
+
+bool MenuInput(MenuControl Input, class PlayerInput *MenuPlayer);
+void SetMenuState();
 
 class PlayerInput
 {
@@ -135,61 +169,30 @@ public:
 		if (Data->FrameNumber != FrameNumber)
 		{
 			FrameNumber = Data->FrameNumber;
-			if (ButtonClicked(Data->Buttons, WiimoteData::kButton_Home))
-			{
-				ShowPointer = !ShowPointer;
-			}
 
-			if (CalibrationPhase < 4 && ButtonClicked(Data->Buttons, (WiimoteData::kButton_B | WiimoteData::kButton_A)))
+			if (UIState == kUIState_CalibrationMode && CalibrationPhase < 4)
 			{
-				if (Data->IRSpot[0].X != 0x3FF || Data->IRSpot[0].Y != 0x3FF)
+				if (ButtonClicked(Data->Buttons, (WiimoteData::kButton_B | WiimoteData::kButton_A)))
 				{
-					CalibrationData[CalibrationPhase].X = (float)Data->IRSpot[0].X;
-					CalibrationData[CalibrationPhase].Y = (float)Data->IRSpot[0].Y;
-					CalibrationPhase++;
-					DoneCalibration = (CalibrationPhase == 4);
-					DoingCalibration = !DoneCalibration;
+					if (Data->IRSpot[0].X != 0x3FF || Data->IRSpot[0].Y != 0x3FF)
+					{
+						CalibrationData[CalibrationPhase].X = (float)Data->IRSpot[0].X;
+						CalibrationData[CalibrationPhase].Y = (float)Data->IRSpot[0].Y;
+						CalibrationPhase++;
+						DoneCalibration = (CalibrationPhase == 4);
+						if (DoneCalibration)
+						{
+							UIState = kUIState_Playing;
+						}
+					}
+				}
+				else if (ButtonClicked(Data->Buttons, WiimoteData::kButton_Home))
+				{
+					ResetCalibration();
 				}
 			}
 
-			if (PlayerMask != 0)
-			{
-				if (!DoingCalibration && (Data->Buttons & WiimoteData::kButton_Plus))
-				{
-					Coop = true;
-					ImageData = &ImageCoop[0][0];
-					DisplayTime = 1500;
-					TextMode = true;
-				}
-
-				if (!DoingCalibration && (Data->Buttons & WiimoteData::kButton_Minus))
-				{
-					Coop = false;
-					ImageData = &ImageDual[0][0];
-					DisplayTime = 1500;
-					TextMode = true;
-				}
-			}
-
-			if (Data->Buttons & WiimoteData::kButton_Up)
-			{
-				if (CalibrationPhase != 4)
-				{
-					CalibrationPhase = 4;
-					DoingCalibration = false;
-				}
-				DoneCalibration = false;
-			}
-			
-			if (!DoingCalibration && (Data->Buttons & WiimoteData::kButton_Down))
-			{
-				CalibrationPhase = 0;
-				DoneCalibration = false;
-				DoingCalibration = true;
-				DisplayTime = 0;
-			}
-
-			if (CalibrationPhase < 4)
+			if (UIState == kUIState_CalibrationMode && CalibrationPhase < 4)
 			{
 				ImageData = &ImageAim[0][0];
 				TextMode = true;
@@ -257,7 +260,7 @@ public:
 				{
 					TextMode = false;	// Turn off sync message once connected
 				}
-				else if (!DoingCalibration && DisplayTime <= 0)
+				else if (UIState != kUIState_CalibrationMode)
 				{
 					TextMode = false;	// Turn off calibration message
 				}
@@ -275,6 +278,20 @@ public:
 	bool ButtonWasPressed(int ButtonSelect)
 	{
 		return (OldButtons & ButtonSelect) != 0;
+	}
+
+	void ResetCalibration()
+	{
+		CalibrationPhase = 4;
+		DoneCalibration = false;
+		UIState = kUIState_Playing;
+	}
+		
+	void StartCalibration()
+	{
+		CalibrationPhase = 0;
+		DoneCalibration = false;
+		UIState = kUIState_CalibrationMode;
 	}
 
 private:
@@ -342,10 +359,7 @@ void WiimoteTask(void *pvParameters)
 {
 	bool WasPlayer1Button = false;
 	bool WasPlayer2Button = false;
-	bool WasCalibrationDelayUp = false;
-	bool WasCalibrationDelayDown = false;
-	bool WasWhiteLevelChangeUp = true;
-	bool WasWhiteLevelChangeDown = true;
+	bool WasHomeButton = false;
 	printf("WiimoteTask running on core %d\n", xPortGetCoreID());
 	GWiimoteManager.Init();
 	PlayerInput Player1(0);
@@ -355,6 +369,49 @@ void WiimoteTask(void *pvParameters)
 		GWiimoteManager.Tick();
 		Player1.Tick();
 		Player2.Tick();
+			
+		bool bHomePressed = Player1.ButtonWasPressed(WiimoteData::kButton_Home) || Player2.ButtonWasPressed(WiimoteData::kButton_Home);
+		if (bHomePressed && !WasHomeButton)
+		{
+			if (UIState == kUIState_InMenu)
+				UIState = kUIState_Playing;
+			else if (UIState == kUIState_Playing)
+				UIState = kUIState_InMenu;
+		}
+		WasHomeButton = bHomePressed;
+
+		if (UIState == kUIState_InMenu)
+		{
+			MenuControl CurrentMenuControl = kMenu_None;
+
+			PlayerInput *MenuPlayerInput = nullptr;
+			for (int Player = 0; Player < 2; Player++)
+			{
+				PlayerInput &Input = (Player == 0) ? Player1 : Player2;
+
+				if (Input.ButtonWasPressed(WiimoteData::kButton_Down))
+					CurrentMenuControl = kMenu_Down;
+				else if (Input.ButtonWasPressed(WiimoteData::kButton_Up))
+					CurrentMenuControl = kMenu_Up;
+				else if (Input.ButtonWasPressed(WiimoteData::kButton_Left))
+					CurrentMenuControl = kMenu_Left;
+				else if (Input.ButtonWasPressed(WiimoteData::kButton_Right))
+					CurrentMenuControl = kMenu_Right;
+				else if (Input.ButtonWasPressed(WiimoteData::kButton_A | WiimoteData::kButton_B))
+					CurrentMenuControl = kMenu_Select;
+
+				if (CurrentMenuControl != kMenu_None)
+				{
+					MenuPlayerInput = &Input;
+					break;
+				}
+			}
+
+			if (MenuInput(CurrentMenuControl, MenuPlayerInput))
+			{
+				SetMenuState();
+			}
+		}
 
 		bool Player1Button = Player1.ButtonWasPressed(WiimoteData::kButton_A | WiimoteData::kButton_B);
 		bool Player2Button = Player2.ButtonWasPressed(WiimoteData::kButton_A | WiimoteData::kButton_B);
@@ -376,56 +433,6 @@ void WiimoteTask(void *pvParameters)
 		WasPlayer1Button = Player1Button;
 		WasPlayer2Button = Player2Button;
 
-		bool CalibrationDelayUp = Player1.ButtonWasPressed(WiimoteData::kButton_Right) || Player2.ButtonWasPressed(WiimoteData::kButton_Right);
-		bool CalibrationDelayDown = Player1.ButtonWasPressed(WiimoteData::kButton_Left) || Player2.ButtonWasPressed(WiimoteData::kButton_Left);
-		if (CalibrationDelayUp && !WasCalibrationDelayUp)
-		{
-			CalibrationDelay += 8; // Up 1/10th of microsecond
-		}
-		else if (CalibrationDelayDown && !WasCalibrationDelayDown)
-		{
-			CalibrationDelay = MAX(CalibrationDelay - 8, 0); // Down 1/10th of microsecond
-		}
-		WasCalibrationDelayUp = CalibrationDelayUp;
-		WasCalibrationDelayDown = CalibrationDelayDown;
-	
-		bool WhiteLevelChangeUp = Player1.ButtonWasPressed(WiimoteData::kButton_One) || Player2.ButtonWasPressed(WiimoteData::kButton_One);
-		bool WhiteLevelChangeDown = Player1.ButtonWasPressed(WiimoteData::kButton_Two) || Player2.ButtonWasPressed(WiimoteData::kButton_Two);
-		if (WhiteLevelChangeDown && !WasWhiteLevelChangeDown)
-		{
-			if (WhiteLevel > 0)
-			{
-				WhiteLevel -= WHITE_LEVEL_STEP;
-				if (WhiteLevel < 0)
-				{
-					gpio_set_direction(OUT_WHITE_OVERRIDE, GPIO_MODE_OUTPUT);
-					gpio_set_level(OUT_WHITE_OVERRIDE, 1); // Force white level high
-				}
-				else
-				{
-					gpio_set_direction(OUT_WHITE_OVERRIDE, GPIO_MODE_INPUT);
-					ledc_set_duty(LEDC_WHITE_LEVEL_MODE, LEDC_WHITE_LEVEL_CHANNEL, WhiteLevel);
-					ledc_update_duty(LEDC_WHITE_LEVEL_MODE, LEDC_WHITE_LEVEL_CHANNEL);
-				}
-			}
-		}
-		else if (WhiteLevelChangeUp && !WasWhiteLevelChangeUp)
-		{
-			if (WhiteLevel < (1 << 13) - WHITE_LEVEL_STEP)
-			{
-				WhiteLevel += WHITE_LEVEL_STEP;
-				gpio_set_direction(OUT_WHITE_OVERRIDE, GPIO_MODE_INPUT);
-				ledc_set_duty(LEDC_WHITE_LEVEL_MODE, LEDC_WHITE_LEVEL_CHANNEL, WhiteLevel);
-				ledc_update_duty(LEDC_WHITE_LEVEL_MODE, LEDC_WHITE_LEVEL_CHANNEL);
-			}
-		}
-		WasWhiteLevelChangeDown = WhiteLevelChangeDown;
-		WasWhiteLevelChangeUp = WhiteLevelChangeUp;
-
-		if (DisplayTime > 0)
-		{
-			DisplayTime--;
-		}
 		if (LogoTime > 0)
 		{
 			LogoTime--;
@@ -574,11 +581,51 @@ int IRAM_ATTR SetupLine(uint32_t Bank, const int *StartingLine)
 	EndTerminator.level1 = 1;
 	EndTerminator.duration1 = 0;
 	
-	if (ShowPointer)
+	if (UIState == kUIState_InMenu && CurrentLine >= MENU_START_LINE && CurrentLine < MENU_END_LINE)
+	{
+		if (CurrentTextSubLine < NUM_TEXT_SUBLINES)
+		{
+			int CurData=0;
+			rmt_item32_t StartingDelay;
+			StartingDelay.level0 = 1;
+			StartingDelay.duration0 = TIMING_BACK_PORCH;
+			StartingDelay.level1 = 1;
+			StartingDelay.duration1 = MENU_START_MARGIN;
+			const unsigned char *Message = TextBuffer[CurrentTextLine];
+			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData++].val = StartingDelay.val;
+			for (int Column = 0; Column < NUM_TEXT_COLUMNS; Column++)
+			{
+				int Remapped = Message[Column];
+				const uint32_t *FontData=Font[Remapped][CurrentTextSubLine];
+				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData++].val = FontData[0];
+				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData++].val = FontData[1];
+				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData++].val = FontData[2];
+			}
+			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData++].val = EndTerminator.val;
+			Active = 1;
+		}
+		CurrentTextSubLine++;
+		if (CurrentTextSubLine >= NUM_TEXT_SUBLINES + NUM_TEXT_BORDER_LINES)
+		{
+			CurrentTextSubLine = 0;
+			CurrentTextLine++;
+		}
+	}
+	else if (UIState == kUIState_CalibrationMode || ShowPointer)
 	{
 		bool bPlayerVisibleOnLine[2];
 		bPlayerVisibleOnLine[0] = CurrentLine >= StartingLine[0] && CurrentLine < StartingLine[0] + ARRAY_NUM(ReticuleSizeLookup[0]);
 		bPlayerVisibleOnLine[1] = CurrentLine >= StartingLine[1] && CurrentLine < StartingLine[1] + ARRAY_NUM(ReticuleSizeLookup[0]);
+		for (int Player = 0; Player < 2; Player++)
+		{
+			if (bPlayerVisibleOnLine[Player])
+			{
+				if (ReticuleSizeLookup[Player][CurrentLine - StartingLine[Player]] < 4) // Pulses less than 4 cause issues
+				{
+					bPlayerVisibleOnLine[Player] = false;
+				}
+			}
+		}
 		if (LogoMode && CurrentLine >= LOGO_START_LINE && CurrentLine < LOGO_END_LINE)
 		{
 			int LineIdx = CurrentLine - LOGO_START_LINE;
@@ -709,6 +756,8 @@ void IRAM_ATTR SpotGeneratorInnerLoop()
 		if (Time > TIMING_VSYNC_THRESHOLD)
 		{
 			CurrentLine = 0;
+			CurrentTextLine = 0;
+			CurrentTextSubLine = 0;
 			// Cache starting lines as they will be changing on other thread
 			// Otherwise if player moving cursor up we could miss triggering
 			CachedStartingLines[0] = ReticuleStartLineNum[0];
@@ -721,23 +770,63 @@ void IRAM_ATTR SpotGeneratorInnerLoop()
 	}
 }
 
+void SetReticuleSize()
+{
+	float Scale = 1.0f;
+	switch (CursorSize)
+	{
+		case 0: Scale = 1.00f; break; // Off (Will be shown during calibration)
+		case 1: Scale = 0.25f; break; // Small
+		case 2: Scale = 0.50f; break; // Medium
+		case 3: Scale = 1.00f; break; // Large
+	}
+	int ReticuleNumLines = ARRAY_NUM(ReticuleSizeLookup[0]);
+	float ReticuleHalfSize = Scale * ReticuleNumLines / 2.0f;
+	float ReticuleMiddle = (ReticuleNumLines - 1) / 2.0f;
+	for (int i = 0; i < ReticuleNumLines; i++)
+	{
+		float y = (i - ReticuleMiddle) / ReticuleHalfSize;
+		if (y * y < 1.0f)
+		{
+			float x = sqrtf(1.0f - y*y);
+			ReticuleSizeLookup[0][i] = Scale * TIMING_RETICULE_WIDTH * x;
+			x = 1.0f - fabsf(y);
+			ReticuleSizeLookup[1][i] = Scale * TIMING_RETICULE_WIDTH * x;
+		}
+		else
+		{
+			ReticuleSizeLookup[0][i] = 0;
+			ReticuleSizeLookup[1][i] = 0;
+		}
+	}
+}
+
+void SetMenuState()
+{
+	ShowPointer = (CursorSize != 0);
+	SetReticuleSize();
+	CalibrationDelay = DelayDecimal * 8; // 80th of microsecond
+	WhiteLevel = WhiteLevelDecimal * WHITE_LEVEL_STEP;
+	if (WhiteLevel == 0)
+	{
+		gpio_set_direction(OUT_WHITE_OVERRIDE, GPIO_MODE_OUTPUT);
+		gpio_set_level(OUT_WHITE_OVERRIDE, 1); // Force white level high
+	}
+	else
+	{
+		gpio_set_direction(OUT_WHITE_OVERRIDE, GPIO_MODE_INPUT);
+		ledc_set_duty(LEDC_WHITE_LEVEL_MODE, LEDC_WHITE_LEVEL_CHANNEL, WhiteLevel);
+		ledc_update_duty(LEDC_WHITE_LEVEL_MODE, LEDC_WHITE_LEVEL_CHANNEL);
+	}
+}
+
 void SpotGeneratorTask(void *pvParameters)
 {
 	printf("SpotGeneratorTask starting on core %d\n", xPortGetCoreID());
 
 	ESP_ERROR_CHECK(gpio_set_direction(IN_COMPOSITE_SYNC, GPIO_MODE_INPUT));
 
-	int ReticuleNumLines = ARRAY_NUM(ReticuleSizeLookup[0]);
-	float ReticuleHalfSize = ReticuleNumLines / 2.0f;
-	float ReticuleMiddle = (ReticuleNumLines - 1) / 2.0f;
-	for (int i = 0; i < ReticuleNumLines; i++)
-	{
-		float y = (i - ReticuleMiddle) / ReticuleHalfSize;
-		float x = sqrtf(1.0f - y*y);
-		ReticuleSizeLookup[0][i] = TIMING_RETICULE_WIDTH*x;
-		x = 1.0f - fabsf(y);
-		ReticuleSizeLookup[1][i] = TIMING_RETICULE_WIDTH*x;
-	}
+	SetReticuleSize();
 
 	PWMPeripherialInit();
 
@@ -807,6 +896,149 @@ void InitializeMiscGPIO()
 	gpio_set_level(OUT_FRONT_PANEL_LED2, 1);
 }
 
+void ConvertText(const char *Text, int Row, int Column)
+{
+	while (*Text)
+	{
+		char Character = *(Text++);
+		unsigned char Remapped = FontRemap[(unsigned char)Character];
+		TextBuffer[Row][Column++] = Remapped;
+	}
+}
+
+void DrawNumber(int Value, int Row, int Column)
+{
+	int Tens = Value / 10;
+	int Ones = Value - Tens * 10;
+	TextBuffer[Row][Column] = Tens;
+	TextBuffer[Row][Column + 1] = FontRemap['.'];
+	TextBuffer[Row][Column + 2] = Ones;
+}
+
+void UpdateMenu()
+{
+	int Tab = 14;
+	switch (CursorSize)
+	{
+		case 0: ConvertText("OFF   ", 2, Tab); break;
+		case 1: ConvertText("SMALL ", 2, Tab); break;
+		case 2: ConvertText("MEDIUM", 2, Tab); break;
+		case 3: ConvertText("LARGE ", 2, Tab); break;
+	}
+	if (Coop)
+		ConvertText("CO OP ", 3, Tab);
+	else
+		ConvertText("VERSUS", 3, Tab);
+	DrawNumber(DelayDecimal, 4, Tab);
+	if (WhiteLevelDecimal)
+	{
+		DrawNumber(WhiteLevelDecimal, 5, Tab);
+		TextBuffer[5][Tab + 3] = FontRemap['V'];
+	}
+	else
+	{
+		ConvertText("OFF ", 5, Tab);
+	}
+	switch (IOType)
+	{
+		case 0: ConvertText("NORMAL", 6, Tab); break;
+		case 1: ConvertText("A + B ", 6, Tab); break;
+		case 2: ConvertText("B + A ", 6, Tab); break;
+	}
+	for (int i=2; i<=9; i++)
+	{
+		TextBuffer[i][0] = FontRemap[(unsigned char)((i == SelectedRow) ? '+' : ' ')];
+	}
+}
+
+bool AdjustRange(MenuControl Input, MenuControl Lower, MenuControl Raise, int &Value, int Min, int Max)
+{
+	if (Input == Lower && Value > Min)
+		Value--;
+	else if (Input == Raise && Value < Max)
+		Value++;
+	else
+		return false;
+	return true;
+}
+
+MenuControl AutoRepeat(MenuControl Input)
+{
+	static MenuControl Last = kMenu_None;
+	static int Repeat = 0;
+	static int RepeatTimer = 0;
+	if (Input == kMenu_None || Last != Input)
+	{
+		Last = Input;
+		RepeatTimer = 400;
+		Repeat = RepeatTimer;
+	}
+	else
+	{
+		Repeat--;
+		if (Repeat > 0)
+		{
+			Input = kMenu_None;
+		}
+		else
+		{
+			RepeatTimer = (RepeatTimer / 8) * 7;
+			if (RepeatTimer < 30)
+				RepeatTimer = 30;
+			Repeat = RepeatTimer;
+		}
+	}
+	return Input;
+}
+
+bool MenuInput(MenuControl Input, PlayerInput *MenuPlayer)
+{
+	Input = AutoRepeat(Input);
+	if (Input != kMenu_None)
+	{
+		bool bDirty = AdjustRange(Input, kMenu_Up, kMenu_Down, SelectedRow, 2, 9);
+		switch (SelectedRow)
+		{
+			case 2: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, CursorSize, 0, 3); break;
+			case 3: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, Coop, 0, 1); break;
+			case 4: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, DelayDecimal, 0, 99); break;
+			case 5: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, WhiteLevelDecimal, 0, 33); break;
+			case 6: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, IOType, 0, 2); break;
+		}
+		if (Input == kMenu_Select)
+		{
+			switch (SelectedRow)
+			{
+				case 7: bDirty |= true; MenuPlayer->StartCalibration(); break;
+				case 8: bDirty |= true; MenuPlayer->ResetCalibration(); break;
+				case 9: bDirty |= true; UIState = kUIState_Playing; break;
+			}
+		}
+		if (bDirty)
+		{
+			UpdateMenu();
+		}
+		return bDirty;
+	}
+	return false;
+}
+
+void InitializeMenu()
+{
+	ConvertText("   CONFIGURE MENU   ", 0, 0);
+	ConvertText("                    ", 1, 0);
+	ConvertText("+CURSOR SIZE: LARGE ", 2, 0);
+	ConvertText(" 2 PLAYER:    VERSUS", 3, 0);
+	ConvertText(" DELAY:       0.0us ", 4, 0);
+	ConvertText(" WHITE LEVEL: 1.3V  ", 5, 0);
+	ConvertText(" IO TYPE:     NORMAL", 6, 0);
+	ConvertText(" START CALIBRATION  ", 7, 0);
+	ConvertText(" RESET CALIBRATION  ", 8, 0);
+	ConvertText(" EXIT               ", 9, 0);
+	UpdateMenu();
+	SetMenuState();
+}
+
 extern "C" void app_main(void)
 {
 	// Magic non-sense to make second core work
@@ -814,6 +1046,7 @@ extern "C" void app_main(void)
 	nvs_flash_init();
 
 	InitializeMiscGPIO();
+	InitializeMenu();
 
 	xTaskCreatePinnedToCore(&WiimoteTask, "WiimoteTask", 8192, NULL, 5, NULL, 0);
 	xTaskCreatePinnedToCore(&SpotGeneratorTask, "SpotGeneratorTask", 2048, NULL, 5, NULL, 1);
