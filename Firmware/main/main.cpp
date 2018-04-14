@@ -51,6 +51,7 @@ extern "C"
 #define RMT_SCREEN_DIM_CHANNEL    	RMT_CHANNEL_1     /*!< RMT channel for screen*/
 #define RMT_TRIGGER_CHANNEL			RMT_CHANNEL_3     /*!< RMT channel for trigger */
 #define RMT_DELAY_TRIGGER_CHANNEL	RMT_CHANNEL_5     /*!< RMT channel for delayed trigger */
+#define RMT_BACKGROUND_CHANNEL		RMT_CHANNEL_7     /*!< RMT channel for menu background */
 
 #define LEDC_WHITE_LEVEL_TIMER      LEDC_TIMER_0
 #define LEDC_WHITE_LEVEL_MODE       LEDC_HIGH_SPEED_MODE
@@ -76,6 +77,8 @@ extern "C"
 #define NUM_TEXT_BORDER_LINES 2		// Blank lines between lines of text
 #define MENU_START_LINE (TIMING_BLANKED_LINES + 25)
 #define MENU_END_LINE (MENU_START_LINE + NUM_TEXT_ROWS * (NUM_TEXT_SUBLINES + NUM_TEXT_BORDER_LINES))
+#define FONT_WIDTH 160				// In 80th of microsecond
+#define MENU_BORDER 40				// In 80th of microsecond
 
 #define ARRAY_NUM(x) (sizeof(x)/sizeof(x[0]))
 #define MIN(a,b) ((a)<(b)?(a):(b))
@@ -103,6 +106,7 @@ static int CursorSize = 3;
 static int DelayDecimal = 0;
 static int WhiteLevelDecimal = 13;
 static int IOType = 0;
+static int CursorBrightness = 3;
 static int SelectedRow = 2;
 static bool LogoMode = true;
 static bool TextMode = true;
@@ -473,6 +477,9 @@ static void RMTPeripheralInit()
 	RMTTxConfig.channel = (rmt_channel_t)(RMT_SCREEN_DIM_CHANNEL + 1);
 	rmt_config(&RMTTxConfig);
 	rmt_driver_install(RMTTxConfig.channel, 0, 0);
+	RMTTxConfig.channel = RMT_BACKGROUND_CHANNEL;
+	rmt_config(&RMTTxConfig);
+	rmt_driver_install(RMTTxConfig.channel, 0, 0);
 	RMTTxConfig.channel = RMT_TRIGGER_CHANNEL;
 	RMTTxConfig.gpio_num = OUT_PLAYER1_LED;
 	rmt_config(&RMTTxConfig);
@@ -551,7 +558,7 @@ SPIN" #Ident ":   l32i.n %0, %1, 0;\
 			"\
 			memw;"\
 			: "+r"(Temp)\
-			: "r"(GPIOIn), "r"(RMTConfig1), "r"(TXStart), "r"(RMTP1Config1), "r"(RMTP2Config1), "r"(RMTP1DConfig1), "r"(RMTP2DConfig1)\
+			: "r"(GPIOIn), "r"(RMTConfig1), "r"(TXStart), "r"(RMTP1Config1), "r"(RMTP2Config1), "r"(RMTP1DConfig1), "r"(RMTP2DConfig1), "r"(RMTBGConfig1)\
 			:\
 		)
 
@@ -567,6 +574,7 @@ void IRAM_ATTR ActivateRMTOnSyncFallingEdge(uint32_t Bank, int Active)
 	volatile uint32_t *RMTP2Config1 = &RMT.conf_ch[RMT_TRIGGER_CHANNEL + 1].conf1.val;
 	volatile uint32_t *RMTP1DConfig1 = &RMT.conf_ch[RMT_DELAY_TRIGGER_CHANNEL].conf1.val;
 	volatile uint32_t *RMTP2DConfig1 = &RMT.conf_ch[RMT_DELAY_TRIGGER_CHANNEL + 1].conf1.val;
+	volatile uint32_t *RMTBGConfig1 = &RMT.conf_ch[RMT_BACKGROUND_CHANNEL].conf1.val;
 	volatile uint32_t *GPIOIn = &GPIO.in;
 	uint32_t Temp = 0, TXStart = 1 | 8; // Start and reset
 	switch (Active)
@@ -578,6 +586,14 @@ void IRAM_ATTR ActivateRMTOnSyncFallingEdge(uint32_t Bank, int Active)
 		case 5: ActivateRMTOnSyncFallingEdgeAsm("s32i.n %0, %2, 0; s32i.n %0, %5, 0; s32i.n %0, %7, 0;"); break;
 		case 6: ActivateRMTOnSyncFallingEdgeAsm("s32i.n %0, %4, 0; s32i.n %0, %5, 0; s32i.n %0, %6, 0; s32i.n %0, %7, 0;"); break;
 		case 7: ActivateRMTOnSyncFallingEdgeAsm("s32i.n %0, %2, 0; s32i.n %0, %4, 0; s32i.n %0, %5, 0; s32i.n %0, %6, 0; s32i.n %0, %7, 0;"); break;
+		case 8: ActivateRMTOnSyncFallingEdgeAsm("s32i.n %0, %8, 0;"); break;
+		case 9: ActivateRMTOnSyncFallingEdgeAsm("s32i.n %0, %2, 0; s32i.n %0, %8, 0;"); break;
+		case 10: ActivateRMTOnSyncFallingEdgeAsm("s32i.n %0, %4, 0; s32i.n %0, %6, 0; s32i.n %0, %8, 0;"); break;
+		case 11: ActivateRMTOnSyncFallingEdgeAsm("s32i.n %0, %2, 0; s32i.n %0, %4, 0; s32i.n %0, %6, 0; s32i.n %0, %8, 0;"); break;
+		case 12: ActivateRMTOnSyncFallingEdgeAsm("s32i.n %0, %5, 0; s32i.n %0, %7, 0; s32i.n %0, %8, 0;"); break;
+		case 13: ActivateRMTOnSyncFallingEdgeAsm("s32i.n %0, %2, 0; s32i.n %0, %5, 0; s32i.n %0, %7, 0; s32i.n %0, %8, 0;"); break;
+		case 14: ActivateRMTOnSyncFallingEdgeAsm("s32i.n %0, %4, 0; s32i.n %0, %5, 0; s32i.n %0, %6, 0; s32i.n %0, %7, 0; s32i.n %0, %8, 0;"); break;
+		case 15: ActivateRMTOnSyncFallingEdgeAsm("s32i.n %0, %2, 0; s32i.n %0, %4, 0; s32i.n %0, %5, 0; s32i.n %0, %6, 0; s32i.n %0, %7, 0; s32i.n %0, %8, 0;"); break;
 	}
 }
 
@@ -614,6 +630,7 @@ int IRAM_ATTR SetupLine(uint32_t Bank, const int *StartingLine)
 			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData++].val = EndTerminator.val;
 			Active = 1;
 		}
+		Active |= 8; // Background menu
 		CurrentTextSubLine++;
 		if (CurrentTextSubLine >= NUM_TEXT_SUBLINES + NUM_TEXT_BORDER_LINES)
 		{
@@ -730,20 +747,23 @@ int IRAM_ATTR SetupLine(uint32_t Bank, const int *StartingLine)
 	return Active;
 }
 
-void IRAM_ATTR DoOutputSelection(uint32_t Bank)
+void IRAM_ATTR DoOutputSelection(uint32_t Bank, bool bInMenu)
 {
 	// Select between holding high or actually outputting
-	WRITE_PERI_REG(OUT_SCREEN_DIM_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | ((RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL + Bank) << GPIO_FUNC0_OUT_SEL_S));
-	WRITE_PERI_REG(OUT_SCREEN_DIMER_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | ((RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL + Bank) << GPIO_FUNC0_OUT_SEL_S));
-	WRITE_PERI_REG(OUT_SCREEN_DIM_INV_SELECTION_REG, (RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL + Bank) << GPIO_FUNC0_OUT_SEL_S);
-	
-	if (((CurrentLine/4)&3)==0)
+
+	if (bInMenu)
 	{
-		WRITE_PERI_REG(OUT_SCREEN_DIMER_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S));
+		WRITE_PERI_REG(OUT_SCREEN_DIM_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | ((RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL + Bank) << GPIO_FUNC0_OUT_SEL_S));
+		WRITE_PERI_REG(OUT_SCREEN_DIMER_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | ((RMT_SIG_OUT0_IDX + RMT_BACKGROUND_CHANNEL) << GPIO_FUNC0_OUT_SEL_S));
+		WRITE_PERI_REG(OUT_SCREEN_DIM_INV_SELECTION_REG, (RMT_SIG_OUT0_IDX + RMT_BACKGROUND_CHANNEL) << GPIO_FUNC0_OUT_SEL_S);
 	}
-	if (((CurrentLine/4)&3)==1)
+	else
 	{
-		WRITE_PERI_REG(OUT_SCREEN_DIM_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S));
+		uint32_t HighChannel = (CursorBrightness&2) ? (RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL + Bank) : SIG_GPIO_OUT_IDX;
+		uint32_t LowChannel = (CursorBrightness&1) ? (RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL + Bank) : SIG_GPIO_OUT_IDX;
+		WRITE_PERI_REG(OUT_SCREEN_DIM_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (HighChannel << GPIO_FUNC0_OUT_SEL_S));
+		WRITE_PERI_REG(OUT_SCREEN_DIMER_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (LowChannel << GPIO_FUNC0_OUT_SEL_S));
+		WRITE_PERI_REG(OUT_SCREEN_DIM_INV_SELECTION_REG, (RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL + Bank) << GPIO_FUNC0_OUT_SEL_S);
 	}
 }
 
@@ -752,7 +772,7 @@ void IRAM_ATTR CompositeSyncPositiveEdge(uint32_t &Bank, int &Active, const int 
 	if (Active != 0 && CurrentLine != 0)
 	{
 		ActivateRMTOnSyncFallingEdge(Bank, Active);
-		DoOutputSelection(Bank);
+		DoOutputSelection(Bank, (Active&8) != 0);
 	}
 	CurrentLine++;
 	Bank = 1 - Bank;
@@ -862,6 +882,17 @@ void SpotGeneratorTask(void *pvParameters)
 	rmt_write_items((rmt_channel_t)(RMT_SCREEN_DIM_CHANNEL + 1), RMTInitialValues, 1, false);	// Prime the RMT
 	rmt_write_items((rmt_channel_t)(RMT_TRIGGER_CHANNEL + 1), RMTInitialValues, 1, false);	// Prime the RMT
 	rmt_write_items((rmt_channel_t)(RMT_DELAY_TRIGGER_CHANNEL + 1), RMTInitialValues, 1, false);	// Prime the RMT
+	
+	rmt_item32_t RMTMenuBackground[2];
+	RMTMenuBackground[0].level0 = 1;
+	RMTMenuBackground[0].duration0 = TIMING_BACK_PORCH;
+	RMTMenuBackground[0].level1 = 1;
+	RMTMenuBackground[0].duration1 = MENU_START_MARGIN - MENU_BORDER;
+	RMTMenuBackground[1].level0 = 0;
+	RMTMenuBackground[1].duration0 = (NUM_TEXT_COLUMNS + 1)*FONT_WIDTH + 2*MENU_BORDER;
+	RMTMenuBackground[1].level1 = 1;
+	RMTMenuBackground[1].duration1 = 0;
+	rmt_write_items(RMT_BACKGROUND_CHANNEL, RMTMenuBackground, 2, false);	// Prime the RMT
 
 	gpio_config_t CSyncGPIOConfig;
 	CSyncGPIOConfig.intr_type = GPIO_INTR_DISABLE;
@@ -959,11 +990,17 @@ void UpdateMenu()
 	{
 		ConvertText("OFF ", 5, Tab);
 	}
+	switch (CursorBrightness)
+	{
+		case 1: ConvertText("DARK  ", 6, Tab); break;
+		case 2: ConvertText("MEDIUM", 6, Tab); break;
+		case 3: ConvertText("BRIGHT", 6, Tab); break;
+	}
 	switch (IOType)
 	{
-		case 0: ConvertText("NORMAL", 6, Tab); break;
-		case 1: ConvertText("A + B ", 6, Tab); break;
-		case 2: ConvertText("B + A ", 6, Tab); break;
+		case 0: ConvertText("NORMAL", 7, Tab); break;
+		case 1: ConvertText("A + B ", 7, Tab); break;
+		case 2: ConvertText("B + A ", 7, Tab); break;
 	}
 	for (int i=2; i<=9; i++)
 	{
@@ -1023,15 +1060,15 @@ bool MenuInput(MenuControl Input, PlayerInput *MenuPlayer)
 			case 3: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, Coop, 0, 1); break;
 			case 4: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, DelayDecimal, 0, 99); break;
 			case 5: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, WhiteLevelDecimal, 0, 33); break;
-			case 6: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, IOType, 0, 2); break;
+			case 6: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, CursorBrightness, 1, 3); break;
+			case 7: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, IOType, 0, 2); break;
 		}
 		if (Input == kMenu_Select)
 		{
 			switch (SelectedRow)
 			{
-				case 7: bDirty |= true; MenuPlayer->StartCalibration(); break;
-				case 8: bDirty |= true; MenuPlayer->ResetCalibration(); break;
-				case 9: bDirty |= true; UIState = kUIState_Playing; break;
+				case 8: bDirty |= true; MenuPlayer->StartCalibration(); break;
+				case 9: bDirty |= true; MenuPlayer->ResetCalibration(); break;
 			}
 		}
 		if (bDirty)
@@ -1051,10 +1088,10 @@ void InitializeMenu()
 	ConvertText(" 2 PLAYER:    VERSUS", 3, 0);
 	ConvertText(" DELAY:       0.0us ", 4, 0);
 	ConvertText(" WHITE LEVEL: 1.3V  ", 5, 0);
-	ConvertText(" IO TYPE:     NORMAL", 6, 0);
-	ConvertText(" START CALIBRATION  ", 7, 0);
-	ConvertText(" RESET CALIBRATION  ", 8, 0);
-	ConvertText(" EXIT               ", 9, 0);
+	ConvertText(" CURSOR COLOR:BRIGHT", 6, 0);
+	ConvertText(" IO TYPE:     NORMAL", 7, 0);
+	ConvertText(" START CALIBRATION  ", 8, 0);
+	ConvertText(" RESET CALIBRATION  ", 9, 0);
 	UpdateMenu();
 	SetMenuState();
 }
