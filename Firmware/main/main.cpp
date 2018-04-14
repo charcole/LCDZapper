@@ -21,6 +21,7 @@ extern "C"
 #include "freertos/task.h"
 #include "driver/uart.h"
 #include "driver/gpio.h"
+#include "driver/rtc_io.h"
 #include "driver/rmt.h"
 #include "driver/timer.h"
 #include "driver/ledc.h"
@@ -30,8 +31,10 @@ extern "C"
 #include "images.h"
 
 #define OUT_SCREEN_DIM  (GPIO_NUM_23) // Controls drawing spot on screen
+#define OUT_SCREEN_DIMER  (GPIO_NUM_33) // Controls drawing spot on screen
 #define OUT_SCREEN_DIM_INV (GPIO_NUM_22) // Inverted version of above
 #define OUT_SCREEN_DIM_SELECTION_REG (GPIO_FUNC23_OUT_SEL_CFG_REG) // Used to route which bank goes to the screen dimming
+#define OUT_SCREEN_DIMER_SELECTION_REG (GPIO_FUNC33_OUT_SEL_CFG_REG) // Used to route which bank goes to the screen dimming
 #define OUT_SCREEN_DIM_INV_SELECTION_REG (GPIO_FUNC22_OUT_SEL_CFG_REG) // Used to route which bank goes to the screen dimming
 #define OUT_PLAYER1_LED (GPIO_NUM_18) // ANDed with detected white level in HW
 #define OUT_PLAYER2_LED (GPIO_NUM_17) // ANDed with detected white level in HW
@@ -492,6 +495,13 @@ static void RMTPeripheralInit()
 	gpio_set_direction(OUT_SCREEN_DIM, GPIO_MODE_OUTPUT);
 	gpio_set_level(OUT_SCREEN_DIM, 1); // If we turn it off keep high
 	gpio_matrix_out(OUT_SCREEN_DIM, RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL, true, false);
+	
+	// Screen dimmer (second channel)
+	rtc_gpio_deinit(OUT_SCREEN_DIMER);
+	PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[OUT_SCREEN_DIMER], PIN_FUNC_GPIO);
+	gpio_set_direction(OUT_SCREEN_DIMER, GPIO_MODE_OUTPUT);
+	gpio_set_level(OUT_SCREEN_DIMER, 1); // If we turn it off keep high
+	gpio_matrix_out(OUT_SCREEN_DIMER, RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL, true, false);
 
 	// Screen dimmer (inverted)
 	PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[OUT_SCREEN_DIM_INV], PIN_FUNC_GPIO);
@@ -724,7 +734,17 @@ void IRAM_ATTR DoOutputSelection(uint32_t Bank)
 {
 	// Select between holding high or actually outputting
 	WRITE_PERI_REG(OUT_SCREEN_DIM_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | ((RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL + Bank) << GPIO_FUNC0_OUT_SEL_S));
+	WRITE_PERI_REG(OUT_SCREEN_DIMER_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | ((RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL + Bank) << GPIO_FUNC0_OUT_SEL_S));
 	WRITE_PERI_REG(OUT_SCREEN_DIM_INV_SELECTION_REG, (RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL + Bank) << GPIO_FUNC0_OUT_SEL_S);
+	
+	if (((CurrentLine/4)&3)==0)
+	{
+		WRITE_PERI_REG(OUT_SCREEN_DIMER_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S));
+	}
+	if (((CurrentLine/4)&3)==1)
+	{
+		WRITE_PERI_REG(OUT_SCREEN_DIM_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (SIG_GPIO_OUT_IDX << GPIO_FUNC0_OUT_SEL_S));
+	}
 }
 
 void IRAM_ATTR CompositeSyncPositiveEdge(uint32_t &Bank, int &Active, const int *CachedStartingLines)
