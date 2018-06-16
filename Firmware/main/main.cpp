@@ -43,8 +43,8 @@ extern "C"
 #define OUT_PLAYER1_TRIGGER_PULLED (GPIO_NUM_25) // Used for Wiimote-only operation
 #define OUT_PLAYER2_TRIGGER_PULLED (GPIO_NUM_27) // Used for Wiimote-only operation
 #define OUT_WHITE_OVERRIDE (GPIO_NUM_19) // Ignore the white level
-#define OUT_FRONT_PANEL_LED1 (GPIO_NUM_32) // Ignore the white level
-#define OUT_FRONT_PANEL_LED2 (GPIO_NUM_4) // Ignore the white level
+#define OUT_FRONT_PANEL_LED1 (GPIO_NUM_32) // Green LED on RJ45
+#define OUT_FRONT_PANEL_LED2 (GPIO_NUM_4) // Green LED on RJ45
 
 #define IN_COMPOSITE_SYNC (GPIO_NUM_21) // Compsite sync input (If changed change also in asm loop)
 
@@ -301,6 +301,11 @@ public:
 		UIState = kUIState_CalibrationMode;
 	}
 
+	bool IsConnected()
+	{
+		return FrameNumber != 0;
+	}
+
 private:
 	float Cross(const Vector2D &LHS, const Vector2D &RHS) const
 	{
@@ -445,6 +450,13 @@ void WiimoteTask(void *pvParameters)
 			LogoTime--;
 		}
 		LogoMode = (LogoTime > 0);
+
+		if (!LogoMode) // LEDs both on at start up
+		{
+			gpio_set_level(OUT_FRONT_PANEL_LED1, Player1.IsConnected() ? 1 : 0);
+			gpio_set_level(OUT_FRONT_PANEL_LED2, Player2.IsConnected() ? 1 : 0);
+		}
+
 		vTaskDelay(1);
 	}
 }
