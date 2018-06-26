@@ -14,6 +14,7 @@
 //     Attribution — You must give appropriate credit, provide a link to the license, and indicate if changes were made. You may do so in any reasonable manner, but not in any way that suggests the licensor endorses you or your use.
 
 #include <stdio.h>
+#include <string.h>
 #include <math.h>
 extern "C"
 {
@@ -26,6 +27,15 @@ extern "C"
 #include "driver/timer.h"
 #include "driver/ledc.h"
 #include "nvs_flash.h"
+#include "esp_wifi.h"
+#include "esp_event_loop.h"
+#include "freertos/event_groups.h"
+#include "lwip/err.h"
+#include "lwip/sockets.h"
+#include "lwip/sys.h"
+#include "lwip/netdb.h"
+#include "lwip/dns.h"
+#include "esp_ota_ops.h"
 };
 #include "esp_wiimote.h"
 #include "images.h"
@@ -1108,6 +1118,196 @@ void InitializeMenu()
 	SetMenuState();
 }
 
+static EventGroupHandle_t wifi_event_group;
+const int WIFI_CONNECTED_BIT = BIT0;
+
+static esp_err_t event_handler(void *ctx, system_event_t *event)
+{
+	switch(event->event_id)
+	{
+		case SYSTEM_EVENT_AP_STACONNECTED:
+			xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
+			break;
+		case SYSTEM_EVENT_AP_STADISCONNECTED:
+			xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT);
+			break;
+		default:
+			break;
+	}
+    return ESP_OK;
+}
+
+void wifi_init_softap()
+{
+	wifi_event_group = xEventGroupCreate();
+
+	tcpip_adapter_init();
+	ESP_ERROR_CHECK(esp_event_loop_init(event_handler, NULL));
+
+	wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+	ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+	wifi_config_t WiFiConfig;
+	strcpy((char*)WiFiConfig.ap.ssid, "LightGunVerter");
+	WiFiConfig.ap.ssid_len = strlen("LightGunVerter");
+	WiFiConfig.ap.password[0] = 0;
+	WiFiConfig.ap.max_connection = 1;
+	WiFiConfig.ap.authmode = WIFI_AUTH_OPEN;
+
+	ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+	ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_AP, &WiFiConfig));
+	ESP_ERROR_CHECK(esp_wifi_start());
+}
+
+void WiFiStartListening()
+{
+	char Buffer[2048];
+
+	xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_BIT, false, true, portMAX_DELAY);
+	printf("Something connected\n");
+
+	int Sock = socket(PF_INET, SOCK_STREAM, 0);
+	
+	sockaddr_in SockAddrIn;	
+	memset(&SockAddrIn, 0, sizeof(SockAddrIn));
+	SockAddrIn.sin_family = AF_INET;
+	SockAddrIn.sin_port = htons(80);
+	SockAddrIn.sin_addr.s_addr = htonl(INADDR_ANY);
+	bind(Sock, (struct sockaddr *)&SockAddrIn, sizeof(SockAddrIn));
+	
+	listen(Sock, 5);
+	
+	printf("Listening\n");
+
+	while (true)
+	{
+		sockaddr_in ClientSockAddrIn;
+		socklen_t ClientSockAddrLen = sizeof(ClientSockAddrIn);
+		int ClientSock = accept(Sock, (sockaddr*)&ClientSockAddrIn, &ClientSockAddrLen);
+	
+		printf("Accepted\n");
+
+		if (ClientSock != -1)
+		{
+			int Recieved = recv(ClientSock, &Buffer, sizeof(Buffer) - 1, 0);
+			if (Recieved > 0)
+			{
+				Buffer[Recieved] = 0;
+				printf("Got: %s\n", Buffer);
+
+				const char* ExpectedRequests[] =
+				{
+					"GET / HTTP/",
+					"GET /index.html HTTP/",
+					"POST / HTTP/",
+					"POST /index.html HTTP/"
+				};
+
+				bool bReturnIndex = false;
+				bool bStartRecieving = false;
+				for (int i = 0; i < ARRAY_NUM(ExpectedRequests); i++)
+				{
+					int Len = strlen(ExpectedRequests[i]);
+					if (Recieved >= Len && strncmp(Buffer, ExpectedRequests[i], Len) == 0)
+					{
+						printf("Matched: %s\n", ExpectedRequests[i]);
+						if (strncmp(Buffer, "POST", 4) == 0)
+							bStartRecieving = true;
+						else
+							bReturnIndex = true;
+						break;
+					}
+				}
+
+				if (bStartRecieving)
+				{
+					int Length = 0;
+					const char* ContentLength = strstr(Buffer, "Content-Length: ");
+					if (ContentLength)
+					{
+						Length = atoi(ContentLength + strlen("Content-Length: "));
+					}
+
+					esp_err_t ErrorCode = ESP_OK;
+					bool bWaitingForStart = true;
+					esp_ota_handle_t UpdateHandle = 0 ;
+					const esp_partition_t *UpdatePartition = esp_ota_get_next_update_partition(nullptr);
+
+					if (Length > 0)
+					{
+						printf("Receiving firmware (Length = %d)\n", Length);
+
+						while (Length > 0)
+						{
+							Recieved = recv(ClientSock, &Buffer, sizeof(Buffer) - 1, 0);
+							if (Recieved <= 0)
+								break;
+
+							Buffer[Recieved] = 0;
+							if (bWaitingForStart)
+							{
+								const char *Start = strstr(Buffer, "LGV_FIRM");
+								if (Start)
+								{
+									printf("Found firmware, starting update\n");
+
+									bWaitingForStart = false;
+    								ErrorCode = esp_ota_begin(UpdatePartition, OTA_SIZE_UNKNOWN, &UpdateHandle);
+
+									const char* StartOfFirmware = Start + strlen("LGV_FIRM");
+									int Afterwards = (Buffer + Recieved) - StartOfFirmware;
+									if (Afterwards > 0)
+									{
+										if (ErrorCode == ESP_OK)
+										{
+											ErrorCode = esp_ota_write(UpdateHandle, StartOfFirmware, Afterwards);
+										}
+									}
+								}
+							}
+							else if (ErrorCode == ESP_OK)
+							{
+								ErrorCode = esp_ota_write(UpdateHandle, Buffer, Recieved);
+							}
+							Length -= Recieved;
+						}
+					}
+
+					if (ErrorCode == ESP_OK)
+					{
+						ErrorCode = esp_ota_end(UpdateHandle);
+					}
+
+					if (ErrorCode == ESP_OK)
+					{
+						ErrorCode = esp_ota_set_boot_partition(UpdatePartition);
+					}
+
+					bool bSuccess = (ErrorCode == ESP_OK && Length == 0 && !bWaitingForStart);
+
+					const char* UpdatedResponse = "HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n<!doctype html><title>LightGunVerter Firmware Update</title><style>*{box-sizing: border-box;}body{margin: 0;}#main{display: flex; min-height: calc(100vh - 40vh);}#main > article{flex: 1;}#main > nav, #main > aside{flex: 0 0 20vw;}#main > nav{order: -1;}header, footer, article, nav, aside{padding: 1em;}header, footer{height: 20vh;}</style><body> <header> <center><h1>LightGunVerter Firmware Update</h1></center> </header> <div id=\"main\"> <nav></nav> <article><p>Firmware update successful. Please reboot.</p></article> <aside></aside> </div></body>";
+					const char* NotUpdatedResponse = "HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n<!doctype html><title>LightGunVerter Firmware Update</title><style>*{box-sizing: border-box;}body{margin: 0;}#main{display: flex; min-height: calc(100vh - 40vh);}#main > article{flex: 1;}#main > nav, #main > aside{flex: 0 0 20vw;}#main > nav{order: -1;}header, footer, article, nav, aside{padding: 1em;}header, footer{height: 20vh;}</style><body> <header> <center><h1>LightGunVerter Firmware Update</h1></center> </header> <div id=\"main\"> <nav></nav> <article><p>Update failed.</p></article> <aside></aside> </div></body>";
+					const char* Response = bSuccess ? UpdatedResponse : NotUpdatedResponse;
+
+					send(ClientSock, Response, strlen(Response), 0);
+				}
+				else
+				{
+					printf("Sending response\n");
+					const char* GoodResponse = "HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n<!doctype html><title>LightGunVerter Firmware Update</title><style>*{box-sizing: border-box;}body{margin: 0;}#main{display: flex; min-height: calc(100vh - 40vh);}#main > article{flex: 1;}#main > nav, #main > aside{flex: 0 0 20vw;}#main > nav{order: -1;}header, footer, article, nav, aside{padding: 1em;}header, footer{height: 20vh;}</style><body> <header> <center><h1>LightGunVerter Firmware Update</h1></center> </header> <div id=\"main\"> <nav></nav> <article> <p> Upload new .bin file: <form id=\"uploadbanner\" enctype=\"multipart/form-data\" method=\"post\" action=\"#\"> <input id=\"fileupload\" name=\"myfile\" type=\"file\"/> <input type=\"submit\" value=\"Update\" id=\"submit\"/> </form> </p><p> <b>Do not remove power while updating</b> </p></article> <aside></aside> </div></body>";
+					const char* BadResponse = "HTTP/1.0 404 NOT FOUND\r\nContent-Type: text/html\r\n\r\n<!doctype html><title>Not Found</title><body>Page not found :(</body>";
+					const char* Response = bReturnIndex ? GoodResponse : BadResponse;
+
+					send(ClientSock, Response, strlen(Response), 0);
+				}
+			}
+
+			printf("Close\n");
+			close(ClientSock);
+		}
+	}
+}
+
 extern "C" void app_main(void)
 {
 	// Magic non-sense to make second core work
@@ -1116,6 +1316,8 @@ extern "C" void app_main(void)
 
 	InitializeMiscGPIO();
 	InitializeMenu();
+	wifi_init_softap();
+	WiFiStartListening();
 
 	xTaskCreatePinnedToCore(&WiimoteTask, "WiimoteTask", 8192, NULL, 5, NULL, 0);
 	xTaskCreatePinnedToCore(&SpotGeneratorTask, "SpotGeneratorTask", 2048, NULL, 5, NULL, 1);
