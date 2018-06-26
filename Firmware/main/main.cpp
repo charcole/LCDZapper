@@ -472,6 +472,7 @@ void WiimoteTask(void *pvParameters)
 		{
 			printf("Restarting\n");
 			GWiimoteManager.DeInit();
+			timer_set_counter_value(TIMER_GROUP_1, TIMER_0, 0xCDC00001ull);
 			esp_restart();
 		}
 
@@ -1336,8 +1337,15 @@ extern "C" void app_main(void)
 	InitializeMiscGPIO();
 	InitializeMenu();
 
-	if (!gpio_get_level(IN_UPLOAD_BUTTON))
+	uint64_t TimerValue = 0;
+	timer_pause(TIMER_GROUP_1, TIMER_0);
+	timer_get_counter_value(TIMER_GROUP_1, TIMER_0, &TimerValue);
+
+	printf("TimerValue:%16llx\n", TimerValue);
+	if (TimerValue == 0xCDC00001ull)
 	{
+		timer_set_counter_value(TIMER_GROUP_1, TIMER_0, 0xCDC00000ull);
+
 		WifiInitAccessPoint();
 		WifiStartListening();
 		vTaskDelay(2000);
@@ -1346,8 +1354,6 @@ extern "C" void app_main(void)
 		esp_restart();
 	}
 
-	printf("a whole new world 6\n");
-	
 	xTaskCreatePinnedToCore(&WiimoteTask, "WiimoteTask", 8192, NULL, 5, NULL, 0);
 	xTaskCreatePinnedToCore(&SpotGeneratorTask, "SpotGeneratorTask", 2048, NULL, 5, NULL, 1);
 }
