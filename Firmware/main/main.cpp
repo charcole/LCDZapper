@@ -57,6 +57,7 @@ extern "C"
 #define OUT_FRONT_PANEL_LED2 (GPIO_NUM_4) // Green LED on RJ45
 
 #define IN_COMPOSITE_SYNC (GPIO_NUM_21) // Compsite sync input (If changed change also in asm loop)
+#define IN_UPLOAD_BUTTON (GPIO_NUM_0) // Upload button
 
 #define RMT_SCREEN_DIM_CHANNEL    	RMT_CHANNEL_1     /*!< RMT channel for screen*/
 #define RMT_TRIGGER_CHANNEL			RMT_CHANNEL_3     /*!< RMT channel for trigger */
@@ -465,6 +466,13 @@ void WiimoteTask(void *pvParameters)
 		{
 			gpio_set_level(OUT_FRONT_PANEL_LED1, Player1.IsConnected() ? 1 : 0);
 			gpio_set_level(OUT_FRONT_PANEL_LED2, Player2.IsConnected() ? 1 : 0);
+		}
+
+		if (!gpio_get_level(IN_UPLOAD_BUTTON))
+		{
+			printf("Restarting\n");
+			GWiimoteManager.DeInit();
+			esp_restart();
 		}
 
 		vTaskDelay(1);
@@ -923,6 +931,14 @@ void SpotGeneratorTask(void *pvParameters)
 	CSyncGPIOConfig.pull_up_en = GPIO_PULLUP_DISABLE;
 	CSyncGPIOConfig.pull_down_en = GPIO_PULLDOWN_DISABLE;
 	gpio_config(&CSyncGPIOConfig);
+	
+	gpio_config_t UploadButtonGPIOConfig;
+	UploadButtonGPIOConfig.intr_type = GPIO_INTR_DISABLE;
+	UploadButtonGPIOConfig.pin_bit_mask = BIT(IN_UPLOAD_BUTTON);
+	UploadButtonGPIOConfig.mode = GPIO_MODE_INPUT;
+	UploadButtonGPIOConfig.pull_up_en = GPIO_PULLUP_ENABLE;
+	UploadButtonGPIOConfig.pull_down_en = GPIO_PULLDOWN_DISABLE;
+	gpio_config(&UploadButtonGPIOConfig);
 
 	timer_group_t timer_group = TIMER_GROUP_1;
 	timer_idx_t timer_idx = TIMER_1;
@@ -1137,7 +1153,7 @@ static esp_err_t event_handler(void *ctx, system_event_t *event)
     return ESP_OK;
 }
 
-void wifi_init_softap()
+void WifiInitAccessPoint()
 {
 	wifi_event_group = xEventGroupCreate();
 
@@ -1159,9 +1175,9 @@ void wifi_init_softap()
 	ESP_ERROR_CHECK(esp_wifi_start());
 }
 
-void WiFiStartListening()
+void WifiStartListening()
 {
-	char Buffer[2048];
+	static char WifiBuffer[2048];
 
 	xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_BIT, false, true, portMAX_DELAY);
 	printf("Something connected\n");
@@ -1179,7 +1195,8 @@ void WiFiStartListening()
 	
 	printf("Listening\n");
 
-	while (true)
+	bool bUpdated = false;
+	while (!bUpdated)
 	{
 		sockaddr_in ClientSockAddrIn;
 		socklen_t ClientSockAddrLen = sizeof(ClientSockAddrIn);
@@ -1189,11 +1206,11 @@ void WiFiStartListening()
 
 		if (ClientSock != -1)
 		{
-			int Recieved = recv(ClientSock, &Buffer, sizeof(Buffer) - 1, 0);
+			int Recieved = recv(ClientSock, &WifiBuffer, sizeof(WifiBuffer) - 1, 0);
 			if (Recieved > 0)
 			{
-				Buffer[Recieved] = 0;
-				printf("Got: %s\n", Buffer);
+				WifiBuffer[Recieved] = 0;
+				printf("Got: %s\n", WifiBuffer);
 
 				const char* ExpectedRequests[] =
 				{
@@ -1208,10 +1225,10 @@ void WiFiStartListening()
 				for (int i = 0; i < ARRAY_NUM(ExpectedRequests); i++)
 				{
 					int Len = strlen(ExpectedRequests[i]);
-					if (Recieved >= Len && strncmp(Buffer, ExpectedRequests[i], Len) == 0)
+					if (Recieved >= Len && strncmp(WifiBuffer, ExpectedRequests[i], Len) == 0)
 					{
 						printf("Matched: %s\n", ExpectedRequests[i]);
-						if (strncmp(Buffer, "POST", 4) == 0)
+						if (strncmp(WifiBuffer, "POST", 4) == 0)
 							bStartRecieving = true;
 						else
 							bReturnIndex = true;
@@ -1222,7 +1239,7 @@ void WiFiStartListening()
 				if (bStartRecieving)
 				{
 					int Length = 0;
-					const char* ContentLength = strstr(Buffer, "Content-Length: ");
+					const char* ContentLength = strstr(WifiBuffer, "Content-Length: ");
 					if (ContentLength)
 					{
 						Length = atoi(ContentLength + strlen("Content-Length: "));
@@ -1239,14 +1256,14 @@ void WiFiStartListening()
 
 						while (Length > 0)
 						{
-							Recieved = recv(ClientSock, &Buffer, sizeof(Buffer) - 1, 0);
+							Recieved = recv(ClientSock, &WifiBuffer, sizeof(WifiBuffer) - 1, 0);
 							if (Recieved <= 0)
 								break;
 
-							Buffer[Recieved] = 0;
+							WifiBuffer[Recieved] = 0;
 							if (bWaitingForStart)
 							{
-								const char *Start = strstr(Buffer, "LGV_FIRM");
+								const char *Start = strstr(WifiBuffer, "LGV_FIRM");
 								if (Start)
 								{
 									printf("Found firmware, starting update\n");
@@ -1255,7 +1272,7 @@ void WiFiStartListening()
     								ErrorCode = esp_ota_begin(UpdatePartition, OTA_SIZE_UNKNOWN, &UpdateHandle);
 
 									const char* StartOfFirmware = Start + strlen("LGV_FIRM");
-									int Afterwards = (Buffer + Recieved) - StartOfFirmware;
+									int Afterwards = (WifiBuffer + Recieved) - StartOfFirmware;
 									if (Afterwards > 0)
 									{
 										if (ErrorCode == ESP_OK)
@@ -1267,7 +1284,7 @@ void WiFiStartListening()
 							}
 							else if (ErrorCode == ESP_OK)
 							{
-								ErrorCode = esp_ota_write(UpdateHandle, Buffer, Recieved);
+								ErrorCode = esp_ota_write(UpdateHandle, WifiBuffer, Recieved);
 							}
 							Length -= Recieved;
 						}
@@ -1290,6 +1307,8 @@ void WiFiStartListening()
 					const char* Response = bSuccess ? UpdatedResponse : NotUpdatedResponse;
 
 					send(ClientSock, Response, strlen(Response), 0);
+
+					bUpdated = bSuccess;
 				}
 				else
 				{
@@ -1316,9 +1335,19 @@ extern "C" void app_main(void)
 
 	InitializeMiscGPIO();
 	InitializeMenu();
-	wifi_init_softap();
-	WiFiStartListening();
 
+	if (!gpio_get_level(IN_UPLOAD_BUTTON))
+	{
+		WifiInitAccessPoint();
+		WifiStartListening();
+		vTaskDelay(2000);
+		esp_wifi_stop();
+		esp_wifi_deinit();
+		esp_restart();
+	}
+
+	printf("a whole new world 6\n");
+	
 	xTaskCreatePinnedToCore(&WiimoteTask, "WiimoteTask", 8192, NULL, 5, NULL, 0);
 	xTaskCreatePinnedToCore(&SpotGeneratorTask, "SpotGeneratorTask", 2048, NULL, 5, NULL, 1);
 }

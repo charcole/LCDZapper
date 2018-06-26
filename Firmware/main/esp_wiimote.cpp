@@ -269,6 +269,12 @@ public:
 		VHCICallbacks.notify_host_recv = ReceivePacket;
 		esp_vhci_host_register_callback(&VHCICallbacks);
 	}
+	
+	static void DeInitBluetooth()
+	{
+		esp_bt_controller_disable();
+		esp_bt_controller_deinit();
+	}
 
 	static void SendPacket(uint8_t *Data, uint16_t Length)
 	{
@@ -1627,6 +1633,11 @@ WiimoteManager::WiimoteManager()
 void WiimoteManager::Init()
 {
 	ESPBluetooth::InitBluetooth();
+}
+
+void WiimoteManager::DeInit()
+{
+	ESPBluetooth::DeInitBluetooth();
 }
 
 IWiimote* WiimoteManager::CreateNewWiimote()
