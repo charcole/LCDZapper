@@ -65,7 +65,7 @@ extern "C"
 #define TIMING_LINE_DURATION  8*465 // In 80ths of a microsecond  (Should be about 52*80 but need to clip when off edge)
 #define TIMING_BLANKED_LINES 24		// Should be about 16?
 #define TIMING_VISIBLE_LINES 250	// Should be 288
-#define TIMING_VSYNC_THRESHOLD (80*16) // If sync is longer than this then doing a vertical sync
+#define TIMING_VSYNC_THRESHOLD (40*16) // If sync is longer than this then doing a vertical sync
 #define TEXT_START_LINE 105
 #define TEXT_END_LINE (TEXT_START_LINE + 80)
 #define LOGO_START_LINE (TIMING_BLANKED_LINES + 25)
@@ -920,7 +920,7 @@ void SpotGeneratorTask(void *pvParameters)
 	config.alarm_en = TIMER_ALARM_DIS;
 	config.auto_reload = TIMER_AUTORELOAD_DIS;
 	config.counter_dir = TIMER_COUNT_UP;
-	config.divider = 1;
+	config.divider = 2;
 	config.intr_type = TIMER_INTR_LEVEL;
 	config.counter_en = TIMER_START;
 	timer_init(timer_group, timer_idx, &config);
