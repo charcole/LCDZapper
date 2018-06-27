@@ -1125,6 +1125,15 @@ void InitializeMiscGPIO()
 	GPIOConfig.pin_bit_mask = BIT(OUT_PLAYER2_TRIGGER2_PULLED);
 	gpio_config(&GPIOConfig);
 	
+	// Set all player LEDs to 0 on startup so don't burn out if on for long periods (need pulldown)
+	GPIOConfig.pin_bit_mask = BIT(OUT_PLAYER1_LED_DELAYED);
+	gpio_config(&GPIOConfig);
+	gpio_set_level(OUT_PLAYER1_LED_DELAYED, 0);
+
+	GPIOConfig.pin_bit_mask = BIT(OUT_PLAYER2_LED_DELAYED);
+	gpio_config(&GPIOConfig);
+	gpio_set_level(OUT_PLAYER2_LED_DELAYED, 0);
+	
 	GPIOConfig.pin_bit_mask = BIT(OUT_WHITE_OVERRIDE);
 	GPIOConfig.mode = GPIO_MODE_INPUT;	// Let white level detect from signal
 	gpio_config(&GPIOConfig);
