@@ -1077,6 +1077,8 @@ void SpotGeneratorTask(void *pvParameters)
 
 	SetReticuleSize();
 
+	InitSpotGenerator();
+
 	vTaskEndScheduler(); // Disable FreeRTOS on this core as we don't need it anymore
 
 	SpotGeneratorInnerLoop();
@@ -1508,7 +1510,6 @@ void WifiStartListening()
 extern "C" void app_main(void)
 {
 	InitializeMiscGPIO();
-	InitSpotGenerator();
 	InitPersistantStorage();
 
 	nvs_flash_init();
