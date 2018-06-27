@@ -938,14 +938,16 @@ void SetMenuState()
 	}
 }
 
-void SpotGeneratorTask(void *pvParameters)
+void InitSpotGenerator()
 {
-	printf("SpotGeneratorTask starting on core %d\n", xPortGetCoreID());
-
-	ESP_ERROR_CHECK(gpio_set_direction(IN_COMPOSITE_SYNC, GPIO_MODE_INPUT));
-
-	SetReticuleSize();
-
+	gpio_config_t CSyncGPIOConfig;
+	CSyncGPIOConfig.intr_type = GPIO_INTR_DISABLE;
+	CSyncGPIOConfig.pin_bit_mask = BIT(IN_COMPOSITE_SYNC);
+	CSyncGPIOConfig.mode = GPIO_MODE_INPUT;
+	CSyncGPIOConfig.pull_up_en = GPIO_PULLUP_DISABLE;
+	CSyncGPIOConfig.pull_down_en = GPIO_PULLDOWN_DISABLE;
+	gpio_config(&CSyncGPIOConfig);
+	
 	PWMPeripherialInit();
 
 	RMTPeripheralInit();
@@ -972,22 +974,6 @@ void SpotGeneratorTask(void *pvParameters)
 	RMTMenuBackground[1].duration1 = 0;
 	rmt_write_items(RMT_BACKGROUND_CHANNEL, RMTMenuBackground, 2, false);	// Prime the RMT
 
-	gpio_config_t CSyncGPIOConfig;
-	CSyncGPIOConfig.intr_type = GPIO_INTR_DISABLE;
-	CSyncGPIOConfig.pin_bit_mask = BIT(IN_COMPOSITE_SYNC);
-	CSyncGPIOConfig.mode = GPIO_MODE_INPUT;
-	CSyncGPIOConfig.pull_up_en = GPIO_PULLUP_DISABLE;
-	CSyncGPIOConfig.pull_down_en = GPIO_PULLDOWN_DISABLE;
-	gpio_config(&CSyncGPIOConfig);
-	
-	gpio_config_t UploadButtonGPIOConfig;
-	UploadButtonGPIOConfig.intr_type = GPIO_INTR_DISABLE;
-	UploadButtonGPIOConfig.pin_bit_mask = BIT(IN_UPLOAD_BUTTON);
-	UploadButtonGPIOConfig.mode = GPIO_MODE_INPUT;
-	UploadButtonGPIOConfig.pull_up_en = GPIO_PULLUP_ENABLE;
-	UploadButtonGPIOConfig.pull_down_en = GPIO_PULLDOWN_DISABLE;
-	gpio_config(&UploadButtonGPIOConfig);
-
 	timer_group_t timer_group = TIMER_GROUP_1;
 	timer_idx_t timer_idx = TIMER_1;
 	timer_config_t config;
@@ -999,6 +985,13 @@ void SpotGeneratorTask(void *pvParameters)
 	config.counter_en = TIMER_START;
 	timer_init(timer_group, timer_idx, &config);
 	timer_set_counter_value(timer_group, timer_idx, 0ULL);
+}
+
+void SpotGeneratorTask(void *pvParameters)
+{
+	printf("SpotGeneratorTask starting on core %d\n", xPortGetCoreID());
+
+	SetReticuleSize();
 
 	vTaskEndScheduler(); // Disable FreeRTOS on this core as we don't need it anymore
 
@@ -1031,6 +1024,14 @@ void InitializeMiscGPIO()
 	GPIOConfig.pin_bit_mask = BIT(OUT_FRONT_PANEL_LED2);
 	gpio_config(&GPIOConfig);
 	gpio_set_level(OUT_FRONT_PANEL_LED2, 1);
+	
+	gpio_config_t UploadButtonGPIOConfig;
+	UploadButtonGPIOConfig.intr_type = GPIO_INTR_DISABLE;
+	UploadButtonGPIOConfig.pin_bit_mask = BIT(IN_UPLOAD_BUTTON);
+	UploadButtonGPIOConfig.mode = GPIO_MODE_INPUT;
+	UploadButtonGPIOConfig.pull_up_en = GPIO_PULLUP_ENABLE;
+	UploadButtonGPIOConfig.pull_down_en = GPIO_PULLDOWN_DISABLE;
+	gpio_config(&UploadButtonGPIOConfig);
 }
 
 void ConvertText(const char *Text, int Row, int Column)
@@ -1241,7 +1242,15 @@ void WifiStartListening()
 {
 	static char WifiBuffer[2048];
 
-	xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_BIT, false, true, portMAX_DELAY);
+	EventBits_t ConnectBits = 0;
+	bool bFlash = false;
+	while ((ConnectBits & WIFI_CONNECTED_BIT) == 0)
+	{
+		ConnectBits = xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_BIT, false, true, 250);
+		gpio_set_level(OUT_FRONT_PANEL_LED1, bFlash?1:0);
+		gpio_set_level(OUT_FRONT_PANEL_LED2, bFlash?0:1);
+		bFlash = !bFlash;
+	}
 	printf("Something connected\n");
 
 	int Sock = socket(PF_INET, SOCK_STREAM, 0);
@@ -1260,10 +1269,15 @@ void WifiStartListening()
 	bool bUpdated = false;
 	while (!bUpdated)
 	{
+		gpio_set_level(OUT_FRONT_PANEL_LED1, 0);
+		gpio_set_level(OUT_FRONT_PANEL_LED2, 0);
+
 		sockaddr_in ClientSockAddrIn;
 		socklen_t ClientSockAddrLen = sizeof(ClientSockAddrIn);
 		int ClientSock = accept(Sock, (sockaddr*)&ClientSockAddrIn, &ClientSockAddrLen);
 	
+		gpio_set_level(OUT_FRONT_PANEL_LED1, 1);
+		gpio_set_level(OUT_FRONT_PANEL_LED2, 1);
 		printf("Accepted\n");
 
 		if (ClientSock != -1)
@@ -1391,12 +1405,11 @@ void WifiStartListening()
 
 extern "C" void app_main(void)
 {
-	// Magic non-sense to make second core work
-	vTaskDelay(500 / portTICK_PERIOD_MS);
-	nvs_flash_init();
-
 	InitializeMiscGPIO();
+	InitSpotGenerator();
 	InitPersistantStorage();
+
+	nvs_flash_init();
 
 	if (GetPersistantStorage() == PERSISTANT_FIRMWARE_UPDATE_MODE)
 	{
