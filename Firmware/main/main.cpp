@@ -79,22 +79,26 @@ extern "C"
 #define TIMING_RETICULE_WIDTH 75.0f // Generates a circle in PAL but might need adjusting for NTSC (In 80ths of a microsecond)
 #define TIMING_BACK_PORCH 8*80		// In 80ths of a microsecond	(Should be about 6*80)
 #define TIMING_LINE_DURATION  8*465 // In 80ths of a microsecond  (Should be about 52*80 but need to clip when off edge)
+#define TIMING_LINE_DURATION_NTSC  8*460 // Not correct. Backporch should be altered instead
 #define TIMING_BLANKED_LINES 24		// Should be about 16?
 #define TIMING_VISIBLE_LINES 250	// Should be 288
+#define TIMING_VISIBLE_LINES_NTSC 202	// Should be 240
 #define TIMING_VSYNC_THRESHOLD (40*16) // If sync is longer than this then doing a vertical sync
+#define TIMING_SHORT_SYNC_THRESHOLD (40*3) // If sync is shorter than this it's a short sync
 #define TEXT_START_LINE 105
 #define TEXT_END_LINE (TEXT_START_LINE + 80)
-#define LOGO_START_LINE (TIMING_BLANKED_LINES + 25)
+#define LOGO_START_LINE (TIMING_BLANKED_LINES + 24)
 #define LOGO_END_LINE (LOGO_START_LINE + 200)
 #define MENU_START_MARGIN 100		// In 80th of microsecond
 #define NUM_TEXT_SUBLINES 20		// Vertical resolution of font
 #define NUM_TEXT_ROWS 10			// Num rows of text
 #define NUM_TEXT_COLUMNS 20			// Num characters across screen
 #define NUM_TEXT_BORDER_LINES 2		// Blank lines between lines of text
-#define MENU_START_LINE (TIMING_BLANKED_LINES + 25)
+#define MENU_START_LINE (TIMING_BLANKED_LINES + 24)
 #define MENU_END_LINE (MENU_START_LINE + NUM_TEXT_ROWS * (NUM_TEXT_SUBLINES + NUM_TEXT_BORDER_LINES))
 #define FONT_WIDTH 160				// In 80th of microsecond
 #define MENU_BORDER 40				// In 80th of microsecond
+#define NTSC_LINE_OFFSET 24			// Remove border lines to recentre (affects Menu/"Text"/Logo etc)
 
 #define PERSISTANT_POWER_ON_VALUE		0xCDC00000ull
 #define PERSISTANT_FIRMWARE_UPDATE_MODE	0xCDC10000ull
@@ -146,6 +150,7 @@ static int CalibrationDelay = 0;
 static int LastActivePlayer = 0;
 static int WhiteLevel = 3225;	// Should produce test voltage of 1.3V (good for composite video)
 static unsigned char TextBuffer[NUM_TEXT_ROWS][NUM_TEXT_COLUMNS];
+static bool bNTSC = true;
 
 bool MenuInput(MenuControl Input, class PlayerInput *MenuPlayer);
 void InitializeFirmwareUpdateScreen();
@@ -246,6 +251,9 @@ public:
 				}
 			}
 
+			int VisibleLines = bNTSC ? TIMING_VISIBLE_LINES_NTSC : TIMING_VISIBLE_LINES;
+			int LineDuration = bNTSC ? TIMING_LINE_DURATION_NTSC : TIMING_LINE_DURATION;
+
 			if (UIState == kUIState_CalibrationMode && CalibrationPhase < 4)
 			{
 				ImageData = &ImageAim[0][0];
@@ -257,16 +265,16 @@ public:
 						ReticuleStartLineNum[PlayerIdx] = TIMING_BLANKED_LINES;
 						break;
 					case 1:
-						ReticuleXPosition[PlayerIdx] = TIMING_BACK_PORCH + TIMING_LINE_DURATION;
+						ReticuleXPosition[PlayerIdx] = TIMING_BACK_PORCH + LineDuration;
 						ReticuleStartLineNum[PlayerIdx] = TIMING_BLANKED_LINES;
 						break;
 					case 2:
 						ReticuleXPosition[PlayerIdx] = TIMING_BACK_PORCH;
-						ReticuleStartLineNum[PlayerIdx] = TIMING_BLANKED_LINES + TIMING_VISIBLE_LINES;
+						ReticuleStartLineNum[PlayerIdx] = TIMING_BLANKED_LINES + VisibleLines;
 						break;
 					case 3:
-						ReticuleXPosition[PlayerIdx] = TIMING_BACK_PORCH + TIMING_LINE_DURATION;
-						ReticuleStartLineNum[PlayerIdx] = TIMING_BLANKED_LINES + TIMING_VISIBLE_LINES;
+						ReticuleXPosition[PlayerIdx] = TIMING_BACK_PORCH + LineDuration;
+						ReticuleStartLineNum[PlayerIdx] = TIMING_BLANKED_LINES + VisibleLines;
 						break;
 
 				}
@@ -280,8 +288,8 @@ public:
 					{
 						Spot = RemapVector(Spot);
 						Spot = Spot * 1023.0f;
-						ReticuleXPosition[PlayerIdx] = TIMING_BACK_PORCH + (TIMING_LINE_DURATION*(int)Spot.X) / 1024;
-						ReticuleStartLineNum[PlayerIdx] = TIMING_BLANKED_LINES + (TIMING_VISIBLE_LINES*(int)Spot.Y) / 1024;
+						ReticuleXPosition[PlayerIdx] = TIMING_BACK_PORCH + (LineDuration*(int)Spot.X) / 1024;
+						ReticuleStartLineNum[PlayerIdx] = TIMING_BLANKED_LINES + (VisibleLines*(int)Spot.Y) / 1024;
 						SpotX = (uint16_t)Spot.X;
 						SpotY = (uint16_t)Spot.Y;
 					}
@@ -296,8 +304,8 @@ public:
 				{
 					if (Data->IRSpot[0].X != 0x3FF || Data->IRSpot[0].Y != 0x3FF)
 					{
-						ReticuleXPosition[PlayerIdx] = TIMING_BACK_PORCH + (TIMING_LINE_DURATION*(1023 - Data->IRSpot[0].X)) / 1024;
-						ReticuleStartLineNum[PlayerIdx] = TIMING_BLANKED_LINES + (TIMING_VISIBLE_LINES*(Data->IRSpot[0].Y + Data->IRSpot[0].Y / 3)) / 1024;
+						ReticuleXPosition[PlayerIdx] = TIMING_BACK_PORCH + (LineDuration*(1023 - Data->IRSpot[0].X)) / 1024;
+						ReticuleStartLineNum[PlayerIdx] = TIMING_BLANKED_LINES + (VisibleLines*(Data->IRSpot[0].Y + Data->IRSpot[0].Y / 3)) / 1024;
 						SpotX = Data->IRSpot[0].X;
 						SpotY = Data->IRSpot[0].Y;
 					}
@@ -763,13 +771,15 @@ int IRAM_ATTR SetupLine(uint32_t Bank, const int *StartingLine)
 {
 	int Active = 0;
 
+	int NormalizedCurrentLine = bNTSC ? CurrentLine + NTSC_LINE_OFFSET : CurrentLine; // Remove border
+
 	rmt_item32_t EndTerminator;
 	EndTerminator.level0 = 1;
 	EndTerminator.duration0 = 0;
 	EndTerminator.level1 = 1;
 	EndTerminator.duration1 = 0;
 	
-	if ((UIState == kUIState_InMenu || UIState == kUIState_FirmwareUpdate) && CurrentLine >= MENU_START_LINE && CurrentLine < MENU_END_LINE)
+	if ((UIState == kUIState_InMenu || UIState == kUIState_FirmwareUpdate) && NormalizedCurrentLine >= MENU_START_LINE && NormalizedCurrentLine < MENU_END_LINE)
 	{
 		if (CurrentTextSubLine < NUM_TEXT_SUBLINES)
 		{
@@ -815,9 +825,9 @@ int IRAM_ATTR SetupLine(uint32_t Bank, const int *StartingLine)
 				}
 			}
 		}
-		if (LogoMode && CurrentLine >= LOGO_START_LINE && CurrentLine < LOGO_END_LINE)
+		if (LogoMode && NormalizedCurrentLine >= LOGO_START_LINE && NormalizedCurrentLine < LOGO_END_LINE)
 		{
-			int LineIdx = CurrentLine - LOGO_START_LINE;
+			int LineIdx = NormalizedCurrentLine - LOGO_START_LINE;
 			for (int i = 0; i < 8; i++)
 			{
 				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[i].val = ImageLogo[LineIdx][i];
@@ -825,9 +835,9 @@ int IRAM_ATTR SetupLine(uint32_t Bank, const int *StartingLine)
 			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[8].val = EndTerminator.val;
 			Active = 1;
 		}
-		else if (TextMode && CurrentLine >= TEXT_START_LINE && CurrentLine < TEXT_END_LINE)
+		else if (TextMode && NormalizedCurrentLine >= TEXT_START_LINE && NormalizedCurrentLine < TEXT_END_LINE)
 		{
-			int LineIdx = CurrentLine - TEXT_START_LINE;
+			int LineIdx = NormalizedCurrentLine - TEXT_START_LINE;
 			for (int i = 0; i < 8; i++)
 			{
 				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[i].val = ImageData[8*LineIdx + i];
@@ -929,7 +939,7 @@ void IRAM_ATTR DoOutputSelection(uint32_t Bank, bool bInMenu)
 	}
 }
 
-void IRAM_ATTR CompositeSyncPositiveEdge(uint32_t &Bank, int &Active, const int *CachedStartingLines)
+void IRAM_ATTR CompositeSyncPositiveEdge(uint32_t &Bank, int &Active)
 {
 	if (Active != 0 && CurrentLine != 0)
 	{
@@ -938,7 +948,6 @@ void IRAM_ATTR CompositeSyncPositiveEdge(uint32_t &Bank, int &Active, const int 
 	}
 	CurrentLine++;
 	Bank = 1 - Bank;
-	Active = SetupLine(Bank, CachedStartingLines);
 }
 
 void IRAM_ATTR SpotGeneratorInnerLoop()
@@ -947,16 +956,28 @@ void IRAM_ATTR SpotGeneratorInnerLoop()
 	uint32_t Bank = 0;
 	int Active = 0;
 	int CachedStartingLines[2];
+	bool bNeedSetup = false;
+	TIMERG1.hw_timer[timer_idx].reload = 1;
 	while (true)
 	{
-		TIMERG1.hw_timer[timer_idx].reload = 1;
 		while ((GPIO.in & BIT(IN_COMPOSITE_SYNC)) != 0); // while sync is still happening
 		TIMERG1.hw_timer[timer_idx].update = 1;
 		// Don't really need the 64-bit time but only reading cnt_low seems to caused it to sometimes not update. Adding some nops also worked but not as reliably as this
 		uint64_t Time = 2*(((uint64_t)TIMERG1.hw_timer[timer_idx].cnt_high<<32) | TIMERG1.hw_timer[timer_idx].cnt_low); // Timer's clk is half APB hence 2x.
-		while ((GPIO.in & BIT(IN_COMPOSITE_SYNC)) == 0); // while not sync
-		if (Time > TIMING_VSYNC_THRESHOLD)
+		if (bNeedSetup)
 		{
+			Active = SetupLine(Bank, CachedStartingLines);
+			bNeedSetup = false;
+		}
+		while ((GPIO.in & BIT(IN_COMPOSITE_SYNC)) == 0); // while not sync
+		TIMERG1.hw_timer[timer_idx].reload = 1;
+		if (Time > TIMING_VSYNC_THRESHOLD || Time < TIMING_SHORT_SYNC_THRESHOLD)
+		{
+			if (CurrentLine > 200 && CurrentLine < 400)
+			{
+				bNTSC = (CurrentLine < 275); // PAL should be something like 300 and NTSC 250
+			}
+
 			CurrentLine = 0;
 			CurrentTextLine = 0;
 			CurrentTextSubLine = 0;
@@ -967,7 +988,8 @@ void IRAM_ATTR SpotGeneratorInnerLoop()
 		}
 		else
 		{
-			CompositeSyncPositiveEdge(Bank, Active, CachedStartingLines);
+			CompositeSyncPositiveEdge(Bank, Active);
+			bNeedSetup = true;
 		}
 	}
 }
@@ -1187,8 +1209,8 @@ void UpdateMenu()
 	}
 	switch (IOType)
 	{
-		case 0: ConvertText("A + B ", 7, Tab); break;
-		case 1: ConvertText("B + A ", 7, Tab); break;
+		case 0: ConvertText("OUT AB", 7, Tab); break;
+		case 1: ConvertText("OUT BA", 7, Tab); break;
 		case 2: ConvertText("INV AB", 7, Tab); break;
 		case 3: ConvertText("INV BA", 7, Tab); break;
 		case 4: ConvertText("SERIAL", 7, Tab); break;
