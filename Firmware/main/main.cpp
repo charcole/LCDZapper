@@ -36,6 +36,7 @@ extern "C"
 #include "lwip/netdb.h"
 #include "lwip/dns.h"
 #include "esp_ota_ops.h"
+#include "rom/rtc.h"
 };
 #include "esp_wiimote.h"
 #include "images.h"
@@ -70,6 +71,8 @@ extern "C"
 #define LEDC_WHITE_LEVEL_CHANNEL    LEDC_CHANNEL_0
 #define WHITE_LEVEL_STEP			248				  // About 0.1V steps
 
+#define HOME_TIME_UNTIL_FIRMWARE_UPDATE 10000
+
 // Change these if using with NTSC
 #define TIMING_RETICULE_WIDTH 75.0f // Generates a circle in PAL but might need adjusting for NTSC (In 80ths of a microsecond)
 #define TIMING_BACK_PORCH 8*80		// In 80ths of a microsecond	(Should be about 6*80)
@@ -90,6 +93,10 @@ extern "C"
 #define MENU_END_LINE (MENU_START_LINE + NUM_TEXT_ROWS * (NUM_TEXT_SUBLINES + NUM_TEXT_BORDER_LINES))
 #define FONT_WIDTH 160				// In 80th of microsecond
 #define MENU_BORDER 40				// In 80th of microsecond
+
+#define PERSISTANT_POWER_ON_VALUE		0xCDC00000ull
+#define PERSISTANT_FIRMWARE_UPDATE_MODE	0xCDC10000ull
+#define PERSISTANT_FIRMWARE_DONE_UPDATE	0xCDC20000ull
 
 #define ARRAY_NUM(x) (sizeof(x)/sizeof(x[0]))
 #define MIN(a,b) ((a)<(b)?(a):(b))
@@ -136,9 +143,33 @@ static int CalibrationDelay = 0;
 static int LastActivePlayer = 0;
 static int WhiteLevel = 3225;	// Should produce test voltage of 1.3V (good for composite video)
 static unsigned char TextBuffer[NUM_TEXT_ROWS][NUM_TEXT_COLUMNS];
+static bool bDoingFirmwareUpdate = false;
 
 bool MenuInput(MenuControl Input, class PlayerInput *MenuPlayer);
 void SetMenuState();
+
+void SetPersistantStorage(uint64_t PersistantValue)
+{
+	timer_set_counter_value(TIMER_GROUP_1, TIMER_0, PersistantValue);
+}
+
+uint64_t GetPersistantStorage()
+{
+	uint64_t TimerValue = 0;
+	timer_get_counter_value(TIMER_GROUP_1, TIMER_0, &TimerValue);
+	return TimerValue;
+}
+
+void InitPersistantStorage()
+{
+	// Timers aren't re-initialised by esp_restart()
+	// Used to restart into firmware update mode
+	timer_pause(TIMER_GROUP_1, TIMER_0);
+	if (rtc_get_reset_reason(0) == POWERON_RESET)
+	{
+		SetPersistantStorage(PERSISTANT_POWER_ON_VALUE);
+	}
+}
 
 class PlayerInput
 {
@@ -383,6 +414,7 @@ void WiimoteTask(void *pvParameters)
 	bool WasPlayer1Button = false;
 	bool WasPlayer2Button = false;
 	bool WasHomeButton = false;
+	int HomeButtonTimer = 0;
 	printf("WiimoteTask running on core %d\n", xPortGetCoreID());
 	GWiimoteManager.Init();
 	PlayerInput Player1(0);
@@ -468,11 +500,21 @@ void WiimoteTask(void *pvParameters)
 			gpio_set_level(OUT_FRONT_PANEL_LED2, Player2.IsConnected() ? 1 : 0);
 		}
 
-		if (!gpio_get_level(IN_UPLOAD_BUTTON))
+		bool bUpdateFirmware = false;
+		if (!bHomePressed)
+		{
+			HomeButtonTimer = 0;
+		}
+		else
+		{
+			HomeButtonTimer++;
+			bUpdateFirmware = (HomeButtonTimer > HOME_TIME_UNTIL_FIRMWARE_UPDATE);
+		}
+		if (bUpdateFirmware || !gpio_get_level(IN_UPLOAD_BUTTON))
 		{
 			printf("Restarting\n");
 			GWiimoteManager.DeInit();
-			timer_set_counter_value(TIMER_GROUP_1, TIMER_0, 0xCDC00001ull);
+			SetPersistantStorage(PERSISTANT_FIRMWARE_UPDATE_MODE);
 			esp_restart();
 		}
 
@@ -953,7 +995,10 @@ void SpotGeneratorTask(void *pvParameters)
 	timer_init(timer_group, timer_idx, &config);
 	timer_set_counter_value(timer_group, timer_idx, 0ULL);
 
-	vTaskEndScheduler(); // Disable FreeRTOS on this core as we don't need it anymore
+	if (!bDoingFirmwareUpdate)
+	{
+		vTaskEndScheduler(); // Disable FreeRTOS on this core as we don't need it anymore
+	}
 
 	SpotGeneratorInnerLoop();
 }
@@ -1133,6 +1178,20 @@ void InitializeMenu()
 	ConvertText(" RESET CALIBRATION  ", 9, 0);
 	UpdateMenu();
 	SetMenuState();
+}
+
+void InitializeFirmwareUpdateScreen()
+{
+	ConvertText("  FIRMWARE UPDATER  ", 0, 0);
+	ConvertText("                    ", 1, 0);
+	ConvertText("                    ", 2, 0);
+	ConvertText("        SSID:       ", 3, 0);
+	ConvertText("   LIGHTGUNVERTER   ", 4, 0);
+	ConvertText("                    ", 5, 0);
+	ConvertText("      WEB PAGE:     ", 6, 0);
+	ConvertText("     192.168.4.1    ", 7, 0);
+	ConvertText("                    ", 8, 0);
+	ConvertText("                    ", 9, 0);
 }
 
 static EventGroupHandle_t wifi_event_group;
@@ -1335,24 +1394,27 @@ extern "C" void app_main(void)
 	nvs_flash_init();
 
 	InitializeMiscGPIO();
-	InitializeMenu();
+	InitPersistantStorage();
 
-	uint64_t TimerValue = 0;
-	timer_pause(TIMER_GROUP_1, TIMER_0);
-	timer_get_counter_value(TIMER_GROUP_1, TIMER_0, &TimerValue);
-
-	printf("TimerValue:%16llx\n", TimerValue);
-	if (TimerValue == 0xCDC00001ull)
+	if (GetPersistantStorage() == PERSISTANT_FIRMWARE_UPDATE_MODE)
 	{
-		timer_set_counter_value(TIMER_GROUP_1, TIMER_0, 0xCDC00000ull);
+		SetPersistantStorage(PERSISTANT_FIRMWARE_DONE_UPDATE);
 
 		WifiInitAccessPoint();
+
+		bDoingFirmwareUpdate = true;
+		InitializeFirmwareUpdateScreen();
+		UIState = kUIState_InMenu;
+		xTaskCreatePinnedToCore(&SpotGeneratorTask, "SpotGeneratorTask", 2048, NULL, 5, NULL, 1);
+
 		WifiStartListening();
 		vTaskDelay(2000);
 		esp_wifi_stop();
 		esp_wifi_deinit();
 		esp_restart();
 	}
+	
+	InitializeMenu();
 
 	xTaskCreatePinnedToCore(&WiimoteTask, "WiimoteTask", 8192, NULL, 5, NULL, 0);
 	xTaskCreatePinnedToCore(&SpotGeneratorTask, "SpotGeneratorTask", 2048, NULL, 5, NULL, 1);
