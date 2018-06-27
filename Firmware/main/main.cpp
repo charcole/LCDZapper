@@ -106,7 +106,8 @@ enum EUIState
 {
 	kUIState_Playing,
 	kUIState_InMenu,
-	kUIState_CalibrationMode
+	kUIState_CalibrationMode,
+	kUIState_FirmwareUpdate
 };
 
 enum MenuControl
@@ -143,9 +144,9 @@ static int CalibrationDelay = 0;
 static int LastActivePlayer = 0;
 static int WhiteLevel = 3225;	// Should produce test voltage of 1.3V (good for composite video)
 static unsigned char TextBuffer[NUM_TEXT_ROWS][NUM_TEXT_COLUMNS];
-static bool bDoingFirmwareUpdate = false;
 
 bool MenuInput(MenuControl Input, class PlayerInput *MenuPlayer);
+void InitializeFirmwareUpdateScreen();
 void SetMenuState();
 
 void SetPersistantStorage(uint64_t PersistantValue)
@@ -485,8 +486,6 @@ void WiimoteTask(void *pvParameters)
 			gpio_set_level(OUT_PLAYER2_TRIGGER_PULLED, Player2Button);
 			LastActivePlayer = 0;
 		}
-		WasPlayer1Button = Player1Button;
-		WasPlayer2Button = Player2Button;
 
 		if (LogoTime > 0)
 		{
@@ -500,7 +499,6 @@ void WiimoteTask(void *pvParameters)
 			gpio_set_level(OUT_FRONT_PANEL_LED2, Player2.IsConnected() ? 1 : 0);
 		}
 
-		bool bUpdateFirmware = false;
 		if (!bHomePressed)
 		{
 			HomeButtonTimer = 0;
@@ -508,15 +506,22 @@ void WiimoteTask(void *pvParameters)
 		else
 		{
 			HomeButtonTimer++;
-			bUpdateFirmware = (HomeButtonTimer > HOME_TIME_UNTIL_FIRMWARE_UPDATE);
+			if (HomeButtonTimer > HOME_TIME_UNTIL_FIRMWARE_UPDATE)
+			{
+				UIState = kUIState_FirmwareUpdate;
+				InitializeFirmwareUpdateScreen();
+			}
 		}
-		if (bUpdateFirmware || !gpio_get_level(IN_UPLOAD_BUTTON))
+		if ((UIState == kUIState_FirmwareUpdate && Player1Button && !WasPlayer1Button) || !gpio_get_level(IN_UPLOAD_BUTTON))
 		{
 			printf("Restarting\n");
 			GWiimoteManager.DeInit();
 			SetPersistantStorage(PERSISTANT_FIRMWARE_UPDATE_MODE);
 			esp_restart();
 		}
+		
+		WasPlayer1Button = Player1Button;
+		WasPlayer2Button = Player2Button;
 
 		vTaskDelay(1);
 	}
@@ -680,7 +685,7 @@ int IRAM_ATTR SetupLine(uint32_t Bank, const int *StartingLine)
 	EndTerminator.level1 = 1;
 	EndTerminator.duration1 = 0;
 	
-	if (UIState == kUIState_InMenu && CurrentLine >= MENU_START_LINE && CurrentLine < MENU_END_LINE)
+	if ((UIState == kUIState_InMenu || UIState == kUIState_FirmwareUpdate) && CurrentLine >= MENU_START_LINE && CurrentLine < MENU_END_LINE)
 	{
 		if (CurrentTextSubLine < NUM_TEXT_SUBLINES)
 		{
@@ -995,10 +1000,7 @@ void SpotGeneratorTask(void *pvParameters)
 	timer_init(timer_group, timer_idx, &config);
 	timer_set_counter_value(timer_group, timer_idx, 0ULL);
 
-	if (!bDoingFirmwareUpdate)
-	{
-		vTaskEndScheduler(); // Disable FreeRTOS on this core as we don't need it anymore
-	}
+	vTaskEndScheduler(); // Disable FreeRTOS on this core as we don't need it anymore
 
 	SpotGeneratorInnerLoop();
 }
@@ -1184,14 +1186,14 @@ void InitializeFirmwareUpdateScreen()
 {
 	ConvertText("  FIRMWARE UPDATER  ", 0, 0);
 	ConvertText("                    ", 1, 0);
-	ConvertText("                    ", 2, 0);
-	ConvertText("        SSID:       ", 3, 0);
-	ConvertText("   LIGHTGUNVERTER   ", 4, 0);
-	ConvertText("                    ", 5, 0);
-	ConvertText("      WEB PAGE:     ", 6, 0);
-	ConvertText("     192.168.4.1    ", 7, 0);
-	ConvertText("                    ", 8, 0);
-	ConvertText("                    ", 9, 0);
+	ConvertText(" PRESS A TO RESTART ", 2, 0);
+	ConvertText(" THEN CONNECT TO... ", 3, 0);
+	ConvertText("                    ", 4, 0);
+	ConvertText("        SSID:       ", 5, 0);
+	ConvertText("   LIGHTGUNVERTER   ", 6, 0);
+	ConvertText("                    ", 7, 0);
+	ConvertText("      WEB PAGE:     ", 8, 0);
+	ConvertText("     192.168.4.1    ", 9, 0);
 }
 
 static EventGroupHandle_t wifi_event_group;
@@ -1362,7 +1364,7 @@ void WifiStartListening()
 
 					bool bSuccess = (ErrorCode == ESP_OK && Length == 0 && !bWaitingForStart);
 
-					const char* UpdatedResponse = "HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n<!doctype html><title>LightGunVerter Firmware Update</title><style>*{box-sizing: border-box;}body{margin: 0;}#main{display: flex; min-height: calc(100vh - 40vh);}#main > article{flex: 1;}#main > nav, #main > aside{flex: 0 0 20vw;}#main > nav{order: -1;}header, footer, article, nav, aside{padding: 1em;}header, footer{height: 20vh;}</style><body> <header> <center><h1>LightGunVerter Firmware Update</h1></center> </header> <div id=\"main\"> <nav></nav> <article><p>Firmware update successful. Please reboot.</p></article> <aside></aside> </div></body>";
+					const char* UpdatedResponse = "HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n<!doctype html><title>LightGunVerter Firmware Update</title><style>*{box-sizing: border-box;}body{margin: 0;}#main{display: flex; min-height: calc(100vh - 40vh);}#main > article{flex: 1;}#main > nav, #main > aside{flex: 0 0 20vw;}#main > nav{order: -1;}header, footer, article, nav, aside{padding: 1em;}header, footer{height: 20vh;}</style><body> <header> <center><h1>LightGunVerter Firmware Update</h1></center> </header> <div id=\"main\"> <nav></nav> <article><p>Firmware update successful. Rebooting...</p></article> <aside></aside> </div></body>";
 					const char* NotUpdatedResponse = "HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n<!doctype html><title>LightGunVerter Firmware Update</title><style>*{box-sizing: border-box;}body{margin: 0;}#main{display: flex; min-height: calc(100vh - 40vh);}#main > article{flex: 1;}#main > nav, #main > aside{flex: 0 0 20vw;}#main > nav{order: -1;}header, footer, article, nav, aside{padding: 1em;}header, footer{height: 20vh;}</style><body> <header> <center><h1>LightGunVerter Firmware Update</h1></center> </header> <div id=\"main\"> <nav></nav> <article><p>Update failed.</p></article> <aside></aside> </div></body>";
 					const char* Response = bSuccess ? UpdatedResponse : NotUpdatedResponse;
 
@@ -1401,12 +1403,6 @@ extern "C" void app_main(void)
 		SetPersistantStorage(PERSISTANT_FIRMWARE_DONE_UPDATE);
 
 		WifiInitAccessPoint();
-
-		bDoingFirmwareUpdate = true;
-		InitializeFirmwareUpdateScreen();
-		UIState = kUIState_InMenu;
-		xTaskCreatePinnedToCore(&SpotGeneratorTask, "SpotGeneratorTask", 2048, NULL, 5, NULL, 1);
-
 		WifiStartListening();
 		vTaskDelay(2000);
 		esp_wifi_stop();
