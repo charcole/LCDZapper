@@ -51,8 +51,10 @@ extern "C"
 #define OUT_PLAYER2_LED (GPIO_NUM_17) // ANDed with detected white level in HW
 #define OUT_PLAYER1_LED_DELAYED (GPIO_NUM_5) // ANDed with detected white level in HW
 #define OUT_PLAYER2_LED_DELAYED (GPIO_NUM_16) // ANDed with detected white level in HW
-#define OUT_PLAYER1_TRIGGER_PULLED (GPIO_NUM_25) // Used for Wiimote-only operation
-#define OUT_PLAYER2_TRIGGER_PULLED (GPIO_NUM_27) // Used for Wiimote-only operation
+#define OUT_PLAYER1_TRIGGER1_PULLED (GPIO_NUM_25) // Used for Wiimote-only operation
+#define OUT_PLAYER1_TRIGGER2_PULLED (GPIO_NUM_26) // Used for Wiimote-only operation
+#define OUT_PLAYER2_TRIGGER1_PULLED (GPIO_NUM_27) // Used for Wiimote-only operation
+#define OUT_PLAYER2_TRIGGER2_PULLED (GPIO_NUM_14) // Used for Wiimote-only operation
 #define OUT_WHITE_OVERRIDE (GPIO_NUM_19) // Ignore the white level
 #define OUT_FRONT_PANEL_LED1 (GPIO_NUM_32) // Green LED on RJ45
 #define OUT_FRONT_PANEL_LED2 (GPIO_NUM_4) // Green LED on RJ45
@@ -211,6 +213,8 @@ public:
 		PlayerIdx = PlayerNum;
 		CalibrationPhase = 4;
 		DoneCalibration = false;
+		SpotX = ~0;
+		SpotY = ~0;
 	}
 
 	void Tick()
@@ -278,11 +282,14 @@ public:
 						Spot = Spot * 1023.0f;
 						ReticuleXPosition[PlayerIdx] = TIMING_BACK_PORCH + (TIMING_LINE_DURATION*(int)Spot.X) / 1024;
 						ReticuleStartLineNum[PlayerIdx] = TIMING_BLANKED_LINES + (TIMING_VISIBLE_LINES*(int)Spot.Y) / 1024;
-
+						SpotX = (uint16_t)Spot.X;
+						SpotY = (uint16_t)Spot.Y;
 					}
 					else
 					{
 						ReticuleStartLineNum[PlayerIdx] = 1000; // Don't draw
+						SpotX = ~0;
+						SpotY = ~0;
 					}
 				}
 				else
@@ -291,10 +298,14 @@ public:
 					{
 						ReticuleXPosition[PlayerIdx] = TIMING_BACK_PORCH + (TIMING_LINE_DURATION*(1023 - Data->IRSpot[0].X)) / 1024;
 						ReticuleStartLineNum[PlayerIdx] = TIMING_BLANKED_LINES + (TIMING_VISIBLE_LINES*(Data->IRSpot[0].Y + Data->IRSpot[0].Y / 3)) / 1024;
+						SpotX = Data->IRSpot[0].X;
+						SpotY = Data->IRSpot[0].Y;
 					}
 					else
 					{
 						ReticuleStartLineNum[PlayerIdx] = 1000; // Don't draw
+						SpotX = ~0;
+						SpotY = ~0;
 					}
 				}
 			}
@@ -328,6 +339,21 @@ public:
 	bool ButtonWasPressed(int ButtonSelect)
 	{
 		return (OldButtons & ButtonSelect) != 0;
+	}
+	
+	uint16_t GetSpotX()
+	{
+		return SpotX;
+	}
+	
+	uint16_t GetSpotY()
+	{
+		return SpotY;
+	}
+
+	uint16_t GetButtons()
+	{
+		return OldButtons;
 	}
 
 	void ResetCalibration()
@@ -408,6 +434,8 @@ private:
 	int CalibrationPhase;
 	Vector2D CalibrationData[4];
 	bool DoneCalibration;
+	uint16_t SpotX;
+	uint16_t SpotY;
 };
 
 void WiimoteTask(void *pvParameters)
@@ -469,22 +497,81 @@ void WiimoteTask(void *pvParameters)
 			}
 		}
 
-		bool Player1Button = Player1.ButtonWasPressed(WiimoteData::kButton_A | WiimoteData::kButton_B);
-		bool Player2Button = Player2.ButtonWasPressed(WiimoteData::kButton_A | WiimoteData::kButton_B);
+		bool Player1AButton = Player1.ButtonWasPressed(WiimoteData::kButton_A);
+		bool Player1BButton = Player1.ButtonWasPressed(WiimoteData::kButton_B);
+		bool Player2AButton = Player2.ButtonWasPressed(WiimoteData::kButton_A);
+		bool Player2BButton = Player2.ButtonWasPressed(WiimoteData::kButton_B);
+		bool Player1Buttons = Player1AButton || Player1BButton;	
+		bool Player2Buttons = Player2AButton || Player2BButton;	
+		
 		if (Coop)
-		{
-			gpio_set_level(OUT_PLAYER1_TRIGGER_PULLED, Player1Button || Player2Button);
-			gpio_set_level(OUT_PLAYER2_TRIGGER_PULLED, false);
-			if (Player1Button && !WasPlayer1Button)
+		{	
+			if (Player1Buttons && !WasPlayer1Button)
 				LastActivePlayer = 0;
-			else if (Player2Button && !WasPlayer2Button)
+			else if (Player2Buttons && !WasPlayer2Button)
 				LastActivePlayer = 1;
+
+			Player1AButton |= Player2AButton;
+			Player2AButton |= Player1AButton;
+			
+			Player1BButton |= Player2BButton;
+			Player2BButton |= Player1BButton;
+		}
+		
+		WasPlayer1Button = Player1Buttons;
+		WasPlayer2Button = Player2Buttons;
+
+		if (IOType != 4)
+		{
+			bool bInvert = ((IOType & 2) != 0);
+			gpio_matrix_out(OUT_PLAYER1_TRIGGER1_PULLED, SIG_GPIO_OUT_IDX, bInvert, false);
+			gpio_matrix_out(OUT_PLAYER1_TRIGGER2_PULLED, SIG_GPIO_OUT_IDX, bInvert, false);
+			gpio_matrix_out(OUT_PLAYER2_TRIGGER1_PULLED, SIG_GPIO_OUT_IDX, bInvert, false);
+			gpio_matrix_out(OUT_PLAYER2_TRIGGER2_PULLED, SIG_GPIO_OUT_IDX, bInvert, false);
+
+			if (IOType & 1)
+			{
+				gpio_set_level(OUT_PLAYER1_TRIGGER1_PULLED, Player1BButton);
+				gpio_set_level(OUT_PLAYER1_TRIGGER2_PULLED, Player1AButton);
+				gpio_set_level(OUT_PLAYER2_TRIGGER1_PULLED, Player2BButton);
+				gpio_set_level(OUT_PLAYER2_TRIGGER2_PULLED, Player2AButton);
+			}
+			else
+			{
+				gpio_set_level(OUT_PLAYER1_TRIGGER1_PULLED, Player1AButton);
+				gpio_set_level(OUT_PLAYER1_TRIGGER2_PULLED, Player1BButton);
+				gpio_set_level(OUT_PLAYER2_TRIGGER1_PULLED, Player2AButton);
+				gpio_set_level(OUT_PLAYER2_TRIGGER2_PULLED, Player2BButton);
+			}
 		}
 		else
 		{
-			gpio_set_level(OUT_PLAYER1_TRIGGER_PULLED, Player1Button);
-			gpio_set_level(OUT_PLAYER2_TRIGGER_PULLED, Player2Button);
-			LastActivePlayer = 0;
+			if (UART1.status.txfifo_cnt == 0) // UART FIFO is zero
+			{
+				uint8_t ToTransmit[16];
+				for (int i = 0; i < 2; i++)
+				{
+					PlayerInput *Player = i ? &Player2 : &Player1;
+					uint16_t SpotX = Player->GetSpotX();
+					uint16_t SpotY = Player->GetSpotY();
+					uint16_t Buttons = Player->GetButtons();
+					ToTransmit[8 * i + 0] = 0x80;
+					ToTransmit[8 * i + 1] = i;
+					ToTransmit[8 * i + 2] = (SpotX >> 7) & 0x7F;
+					ToTransmit[8 * i + 3] = (SpotX & 0x7F);
+					ToTransmit[8 * i + 4] = (SpotY >> 7) & 0x7F;
+					ToTransmit[8 * i + 5] = (SpotY & 0x7F);
+					ToTransmit[8 * i + 6] = (Buttons >> 7) & 0x7F;
+					ToTransmit[8 * i + 7] = (Buttons & 0x7F);
+				}
+
+				gpio_matrix_out(OUT_PLAYER1_TRIGGER1_PULLED, U1TXD_OUT_IDX, false, false);
+				gpio_matrix_out(OUT_PLAYER1_TRIGGER2_PULLED, U1TXD_OUT_IDX, false, false);
+				gpio_matrix_out(OUT_PLAYER2_TRIGGER1_PULLED, U1TXD_OUT_IDX, false, false);
+				gpio_matrix_out(OUT_PLAYER2_TRIGGER2_PULLED, U1TXD_OUT_IDX, false, false);
+
+				uart_tx_chars(UART_NUM_1, (char*)ToTransmit, sizeof(ToTransmit));
+			}
 		}
 
 		if (LogoTime > 0)
@@ -512,16 +599,13 @@ void WiimoteTask(void *pvParameters)
 				InitializeFirmwareUpdateScreen();
 			}
 		}
-		if ((UIState == kUIState_FirmwareUpdate && Player1Button && !WasPlayer1Button) || !gpio_get_level(IN_UPLOAD_BUTTON))
+		if ((UIState == kUIState_FirmwareUpdate && (Player1.ButtonWasPressed(WiimoteData::kButton_A) || Player2.ButtonWasPressed(WiimoteData::kButton_A))) || !gpio_get_level(IN_UPLOAD_BUTTON))
 		{
 			printf("Restarting\n");
 			GWiimoteManager.DeInit();
 			SetPersistantStorage(PERSISTANT_FIRMWARE_UPDATE_MODE);
 			esp_restart();
 		}
-		
-		WasPlayer1Button = Player1Button;
-		WasPlayer2Button = Player2Button;
 
 		vTaskDelay(1);
 	}
@@ -1002,13 +1086,19 @@ void InitializeMiscGPIO()
 {
 	gpio_config_t GPIOConfig;
 	GPIOConfig.intr_type = GPIO_INTR_DISABLE;
-	GPIOConfig.pin_bit_mask = BIT(OUT_PLAYER1_TRIGGER_PULLED);
+	GPIOConfig.pin_bit_mask = BIT(OUT_PLAYER1_TRIGGER1_PULLED);
 	GPIOConfig.mode = GPIO_MODE_OUTPUT;
 	GPIOConfig.pull_up_en = GPIO_PULLUP_DISABLE;
 	GPIOConfig.pull_down_en = GPIO_PULLDOWN_DISABLE;
 	gpio_config(&GPIOConfig);
+	
+	GPIOConfig.pin_bit_mask = BIT(OUT_PLAYER1_TRIGGER2_PULLED);
+	gpio_config(&GPIOConfig);
 
-	GPIOConfig.pin_bit_mask = BIT(OUT_PLAYER2_TRIGGER_PULLED);
+	GPIOConfig.pin_bit_mask = BIT(OUT_PLAYER2_TRIGGER1_PULLED);
+	gpio_config(&GPIOConfig);
+	
+	GPIOConfig.pin_bit_mask = BIT(OUT_PLAYER2_TRIGGER2_PULLED);
 	gpio_config(&GPIOConfig);
 	
 	GPIOConfig.pin_bit_mask = BIT(OUT_WHITE_OVERRIDE);
@@ -1032,6 +1122,16 @@ void InitializeMiscGPIO()
 	UploadButtonGPIOConfig.pull_up_en = GPIO_PULLUP_ENABLE;
 	UploadButtonGPIOConfig.pull_down_en = GPIO_PULLDOWN_DISABLE;
 	gpio_config(&UploadButtonGPIOConfig);
+
+	uart_config_t UARTConfig = {
+        .baud_rate = 9600,
+        .data_bits = UART_DATA_8_BITS,
+        .parity    = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE
+    };
+    uart_param_config(UART_NUM_1, &UARTConfig);
+    uart_driver_install(UART_NUM_1, UART_FIFO_LEN * 2, 0, 0, NULL, 0);
 }
 
 void ConvertText(const char *Text, int Row, int Column)
@@ -1085,9 +1185,11 @@ void UpdateMenu()
 	}
 	switch (IOType)
 	{
-		case 0: ConvertText("NORMAL", 7, Tab); break;
-		case 1: ConvertText("A + B ", 7, Tab); break;
-		case 2: ConvertText("B + A ", 7, Tab); break;
+		case 0: ConvertText("A + B ", 7, Tab); break;
+		case 1: ConvertText("B + A ", 7, Tab); break;
+		case 2: ConvertText("INV AB", 7, Tab); break;
+		case 3: ConvertText("INV BA", 7, Tab); break;
+		case 4: ConvertText("SERIAL", 7, Tab); break;
 	}
 	for (int i=2; i<=9; i++)
 	{
@@ -1148,7 +1250,7 @@ bool MenuInput(MenuControl Input, PlayerInput *MenuPlayer)
 			case 4: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, DelayDecimal, 0, 99); break;
 			case 5: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, WhiteLevelDecimal, 0, 33); break;
 			case 6: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, CursorBrightness, 1, 3); break;
-			case 7: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, IOType, 0, 2); break;
+			case 7: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, IOType, 0, 4); break;
 		}
 		if (Input == kMenu_Select)
 		{
