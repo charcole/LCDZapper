@@ -158,6 +158,7 @@ public:
 	RingBuffer()
 	{
 		Head = CallbackHead = Tail = 0;
+		bPrintError = true;
 	}
 
 	inline void Put(uint8_t *Msg, uint16_t Length)
@@ -165,9 +166,14 @@ public:
 		int Space = (sizeof(Data) - 1 + Tail - CallbackHead)&(sizeof(Data) - 1);
 		if (Space < Length)
 		{
-			printf("ERROR: Circular buffer couldn't fit message (%d/%d). Dropping.\n", Length, Space);
+			if (bPrintError)
+			{
+				printf("ERROR: Circular buffer couldn't fit message (%d/%d). Dropping.\n", Length, Space);
+			}
+			bPrintError = false;
 			return;
 		}
+		bPrintError = true;
 		WriteByte(Length >> 8);
 		WriteByte(Length);
 		for (int i = 0; i < Length; i++)
@@ -222,6 +228,7 @@ private:
 	volatile int Head;	// Should be updated atomically
 	int Tail;
 	int CallbackHead;
+	bool bPrintError;
 	uint8_t Data[kRingBufferSize];
 };
 
