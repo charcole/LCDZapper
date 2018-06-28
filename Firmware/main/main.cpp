@@ -47,17 +47,17 @@ extern "C"
 #define OUT_SCREEN_DIM_SELECTION_REG (GPIO_FUNC23_OUT_SEL_CFG_REG) // Used to route which bank goes to the screen dimming
 #define OUT_SCREEN_DIMER_SELECTION_REG (GPIO_FUNC33_OUT_SEL_CFG_REG) // Used to route which bank goes to the screen dimming
 #define OUT_SCREEN_DIM_INV_SELECTION_REG (GPIO_FUNC22_OUT_SEL_CFG_REG) // Used to route which bank goes to the screen dimming
-#define OUT_PLAYER1_LED (GPIO_NUM_18) // ANDed with detected white level in HW
-#define OUT_PLAYER2_LED (GPIO_NUM_17) // ANDed with detected white level in HW
-#define OUT_PLAYER1_LED_DELAYED (GPIO_NUM_5) // ANDed with detected white level in HW
-#define OUT_PLAYER2_LED_DELAYED (GPIO_NUM_16) // ANDed with detected white level in HW
-#define OUT_PLAYER1_TRIGGER1_PULLED (GPIO_NUM_25) // Used for Wiimote-only operation
-#define OUT_PLAYER1_TRIGGER2_PULLED (GPIO_NUM_26) // Used for Wiimote-only operation
-#define OUT_PLAYER2_TRIGGER1_PULLED (GPIO_NUM_27) // Used for Wiimote-only operation
-#define OUT_PLAYER2_TRIGGER2_PULLED (GPIO_NUM_14) // Used for Wiimote-only operation
+#define OUT_PLAYER1_LED (GPIO_NUM_17) // ANDed with detected white level in HW
+#define OUT_PLAYER2_LED (GPIO_NUM_18) // ANDed with detected white level in HW
+#define OUT_PLAYER1_LED_DELAYED (GPIO_NUM_16) // Delayed output of OUT_PLAYER1_LED to emulate sensor detection time
+#define OUT_PLAYER2_LED_DELAYED (GPIO_NUM_5) // Delayed output of OUT_PLAYER1_LED to emulate sensor detection time
+#define OUT_PLAYER1_TRIGGER1_PULLED (GPIO_NUM_27) // Used for Wiimote-only operation
+#define OUT_PLAYER1_TRIGGER2_PULLED (GPIO_NUM_14) // Used for Wiimote-only operation
+#define OUT_PLAYER2_TRIGGER1_PULLED (GPIO_NUM_25) // Used for Wiimote-only operation
+#define OUT_PLAYER2_TRIGGER2_PULLED (GPIO_NUM_26) // Used for Wiimote-only operation
 #define OUT_WHITE_OVERRIDE (GPIO_NUM_19) // Ignore the white level
-#define OUT_FRONT_PANEL_LED1 (GPIO_NUM_32) // Green LED on RJ45
-#define OUT_FRONT_PANEL_LED2 (GPIO_NUM_4) // Green LED on RJ45
+#define OUT_FRONT_PANEL_LED1 (GPIO_NUM_4) // Green LED on RJ45
+#define OUT_FRONT_PANEL_LED2 (GPIO_NUM_32) // Green LED on RJ45
 
 #define IN_COMPOSITE_SYNC (GPIO_NUM_21) // Compsite sync input (If changed change also in asm loop)
 #define IN_UPLOAD_BUTTON (GPIO_NUM_0) // Upload button
@@ -75,7 +75,6 @@ extern "C"
 
 #define HOME_TIME_UNTIL_FIRMWARE_UPDATE 10000
 
-// Change these if using with NTSC
 #define TIMING_RETICULE_WIDTH 75.0f // Generates a circle in PAL but might need adjusting for NTSC (In 80ths of a microsecond)
 #define TIMING_BACK_PORCH 8*80		// In 80ths of a microsecond	(Should be about 6*80)
 #define TIMING_LINE_DURATION  8*465 // In 80ths of a microsecond  (Should be about 52*80 but need to clip when off edge)
