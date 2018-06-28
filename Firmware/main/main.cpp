@@ -1,4 +1,4 @@
-// (c) Charlie Cole 2017
+// (c) Charlie Cole 2018
 //
 // This is licensed under
 // - Creative Commons Attribution-NonCommercial 3.0 Unported
@@ -98,6 +98,8 @@ extern "C"
 #define FONT_WIDTH 160				// In 80th of microsecond
 #define MENU_BORDER 40				// In 80th of microsecond
 #define NTSC_LINE_OFFSET 24			// Remove border lines to recentre (affects Menu/"Text"/Logo etc)
+
+#define SAVESTATE_VERSION 1
 
 #define PERSISTANT_POWER_ON_VALUE		0xCDC00000ull
 #define PERSISTANT_FIRMWARE_UPDATE_MODE	0xCDC10000ull
@@ -445,6 +447,76 @@ private:
 	uint16_t SpotY;
 };
 
+void SaveMenuState()
+{
+	int32_t CurrentState = 0;
+	CurrentState = SAVESTATE_VERSION;
+	CurrentState = (CurrentState << 2) | CursorSize;
+	CurrentState = (CurrentState << 1) | Coop;
+	CurrentState = (CurrentState << 7) | DelayDecimal;
+	CurrentState = (CurrentState << 6) | WhiteLevelDecimal;
+	CurrentState = (CurrentState << 2) | CursorBrightness;
+	CurrentState = (CurrentState << 3) | IOType;
+
+	nvs_handle NVSHandle;
+	if (nvs_open("lightgunverter", NVS_READWRITE, &NVSHandle) == ESP_OK)
+	{
+		int32_t State = 0;
+		if (nvs_get_i32(NVSHandle, "menu_config", &State) != ESP_OK)
+		{
+			State = 0;
+		}
+		if (CurrentState != State)
+		{
+			if (nvs_set_i32(NVSHandle, "menu_config", CurrentState) == ESP_OK)
+			{
+				printf("Saved menu config\n");
+				nvs_commit(NVSHandle);
+			}
+		}
+		nvs_close(NVSHandle);
+	}
+}
+
+void SetDefaultMenuState()
+{
+	IOType = 0;
+	CursorBrightness = 3;
+	WhiteLevelDecimal = 13;
+	DelayDecimal = 0;
+	Coop = 0;
+	CursorSize = 1;
+}
+
+void RestoreMenuState()
+{
+	nvs_handle NVSHandle;
+	if (nvs_open("lightgunverter", NVS_READONLY, &NVSHandle) == ESP_OK)
+	{
+		int32_t State = 0;
+		if (nvs_get_i32(NVSHandle, "menu_config", &State) == ESP_OK)
+		{
+			IOType = (State & 7); State >>= 3;
+			CursorBrightness = (State & 3); State >>= 2;
+			WhiteLevelDecimal = (State & 63); State >>= 6;
+			DelayDecimal = (State & 127); State >>= 7;
+			Coop = (State & 1); State >>= 1;
+			CursorSize = (State & 3); State >>= 2;
+
+			if (State != SAVESTATE_VERSION || IOType > 4 || CursorBrightness > 3 || WhiteLevelDecimal > 33 || DelayDecimal > 99 || CursorSize > 3)
+			{
+				printf("Menu state seems corrupt: Version=%d Data=%d/%d/%d/%d/%d/%d\n", State, IOType, CursorBrightness, WhiteLevelDecimal, DelayDecimal, CursorSize, Coop);
+				SetDefaultMenuState();
+			}
+			else
+			{
+				printf("Restored menu state\n");
+			}
+		}
+		nvs_close(NVSHandle);
+	}
+}
+
 void WiimoteTask(void *pvParameters)
 {
 	bool WasPlayer1Button = false;
@@ -465,9 +537,14 @@ void WiimoteTask(void *pvParameters)
 		if (bHomePressed && !WasHomeButton)
 		{
 			if (UIState == kUIState_InMenu)
+			{
+				SaveMenuState();
 				UIState = kUIState_Playing;
+			}
 			else if (UIState == kUIState_Playing)
+			{
 				UIState = kUIState_InMenu;
+			}
 		}
 		WasHomeButton = bHomePressed;
 
@@ -695,7 +772,7 @@ static void RMTPeripheralInit()
 static void PWMPeripherialInit()
 {
 	ledc_timer_config_t WhiteLevelPWMTimer;
-	WhiteLevelPWMTimer.bit_num = LEDC_TIMER_13_BIT;
+	WhiteLevelPWMTimer.duty_resolution = LEDC_TIMER_13_BIT;
 	WhiteLevelPWMTimer.freq_hz = 9000;
 	WhiteLevelPWMTimer.speed_mode = LEDC_WHITE_LEVEL_MODE;
 	WhiteLevelPWMTimer.timer_num = LEDC_WHITE_LEVEL_TIMER;
@@ -1143,7 +1220,7 @@ void InitializeMiscGPIO()
 	gpio_config(&GPIOConfig);
 	gpio_set_level(OUT_FRONT_PANEL_LED1, 1);
 	
-	GPIOConfig.pin_bit_mask = BIT(OUT_FRONT_PANEL_LED2);
+	GPIOConfig.pin_bit_mask = 1ull<<OUT_FRONT_PANEL_LED2;
 	gpio_config(&GPIOConfig);
 	gpio_set_level(OUT_FRONT_PANEL_LED2, 1);
 	
@@ -1160,7 +1237,9 @@ void InitializeMiscGPIO()
         .data_bits = UART_DATA_8_BITS,
         .parity    = UART_PARITY_DISABLE,
         .stop_bits = UART_STOP_BITS_1,
-        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+		.rx_flow_ctrl_thresh = 0,
+		.use_ref_tick = false
     };
     uart_param_config(UART_NUM_1, &UARTConfig);
     uart_driver_install(UART_NUM_1, UART_FIFO_LEN * 2, 0, 0, NULL, 0);
@@ -1542,7 +1621,13 @@ extern "C" void app_main(void)
 	InitializeMiscGPIO();
 	InitPersistantStorage();
 
-	nvs_flash_init();
+	esp_err_t NVSErr = nvs_flash_init();
+	if (NVSErr == ESP_ERR_NVS_NO_FREE_PAGES)
+	{
+		ESP_ERROR_CHECK(nvs_flash_erase());
+		NVSErr = nvs_flash_init();
+	}
+	ESP_ERROR_CHECK( NVSErr );
 
 	if (GetPersistantStorage() == PERSISTANT_FIRMWARE_UPDATE_MODE)
 	{
@@ -1555,7 +1640,9 @@ extern "C" void app_main(void)
 		esp_wifi_deinit();
 		esp_restart();
 	}
-	
+
+	SetDefaultMenuState();
+	RestoreMenuState();
 	InitializeMenu();
 
 	xTaskCreatePinnedToCore(&WiimoteTask, "WiimoteTask", 8192, NULL, 5, NULL, 0);
