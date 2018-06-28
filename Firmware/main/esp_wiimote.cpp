@@ -18,7 +18,7 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "bt.h"
+#include "esp_bt.h"
 #include "esp_wiimote.h"
 
 // Provides a minimal Bluetooth stack for communicating with Wiimotes on ESP32
