@@ -71,6 +71,7 @@ public:
 	WiimoteManager();
 
 	void Init();
+	void DeInit();
 	void Tick();
 
 	IWiimote* CreateNewWiimote();

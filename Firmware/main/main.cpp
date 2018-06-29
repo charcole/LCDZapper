@@ -1,4 +1,4 @@
-// (c) Charlie Cole 2017
+// (c) Charlie Cole 2018
 //
 // This is licensed under
 // - Creative Commons Attribution-NonCommercial 3.0 Unported
@@ -14,6 +14,7 @@
 //     Attribution — You must give appropriate credit, provide a link to the license, and indicate if changes were made. You may do so in any reasonable manner, but not in any way that suggests the licensor endorses you or your use.
 
 #include <stdio.h>
+#include <string.h>
 #include <math.h>
 extern "C"
 {
@@ -26,6 +27,18 @@ extern "C"
 #include "driver/timer.h"
 #include "driver/ledc.h"
 #include "nvs_flash.h"
+#include "esp_wifi.h"
+#include "esp_event_loop.h"
+#include "freertos/event_groups.h"
+#include "lwip/err.h"
+#include "lwip/sockets.h"
+#include "lwip/sys.h"
+#include "lwip/netdb.h"
+#include "lwip/dns.h"
+#include "esp_ota_ops.h"
+#include "rom/rtc.h"
+#include "rom/cache.h"
+#include "soc/cpu.h"
 };
 #include "esp_wiimote.h"
 #include "images.h"
@@ -36,22 +49,29 @@ extern "C"
 #define OUT_SCREEN_DIM_SELECTION_REG (GPIO_FUNC23_OUT_SEL_CFG_REG) // Used to route which bank goes to the screen dimming
 #define OUT_SCREEN_DIMER_SELECTION_REG (GPIO_FUNC33_OUT_SEL_CFG_REG) // Used to route which bank goes to the screen dimming
 #define OUT_SCREEN_DIM_INV_SELECTION_REG (GPIO_FUNC22_OUT_SEL_CFG_REG) // Used to route which bank goes to the screen dimming
-#define OUT_PLAYER1_LED (GPIO_NUM_18) // ANDed with detected white level in HW
-#define OUT_PLAYER2_LED (GPIO_NUM_17) // ANDed with detected white level in HW
-#define OUT_PLAYER1_LED_DELAYED (GPIO_NUM_5) // ANDed with detected white level in HW
-#define OUT_PLAYER2_LED_DELAYED (GPIO_NUM_16) // ANDed with detected white level in HW
-#define OUT_PLAYER1_TRIGGER_PULLED (GPIO_NUM_25) // Used for Wiimote-only operation
-#define OUT_PLAYER2_TRIGGER_PULLED (GPIO_NUM_27) // Used for Wiimote-only operation
+#define OUT_PLAYER1_LED (GPIO_NUM_17) // ANDed with detected white level in HW
+#define OUT_PLAYER2_LED (GPIO_NUM_18) // ANDed with detected white level in HW
+#define OUT_PLAYER1_LED_DELAYED (GPIO_NUM_16) // Delayed output of OUT_PLAYER1_LED to emulate sensor detection time
+#define OUT_PLAYER2_LED_DELAYED (GPIO_NUM_5) // Delayed output of OUT_PLAYER1_LED to emulate sensor detection time
+#define OUT_PLAYER1_TRIGGER1_PULLED (GPIO_NUM_27) // Used for Wiimote-only operation
+#define OUT_PLAYER1_TRIGGER2_PULLED (GPIO_NUM_14) // Used for Wiimote-only operation
+#define OUT_PLAYER2_TRIGGER1_PULLED (GPIO_NUM_25) // Used for Wiimote-only operation
+#define OUT_PLAYER2_TRIGGER2_PULLED (GPIO_NUM_26) // Used for Wiimote-only operation
 #define OUT_WHITE_OVERRIDE (GPIO_NUM_19) // Ignore the white level
-#define OUT_FRONT_PANEL_LED1 (GPIO_NUM_32) // Green LED on RJ45
-#define OUT_FRONT_PANEL_LED2 (GPIO_NUM_4) // Green LED on RJ45
+#define OUT_FRONT_PANEL_LED1 (GPIO_NUM_4) // Green LED on RJ45
+#define OUT_FRONT_PANEL_LED2 (GPIO_NUM_32) // Green LED on RJ45
 
 #define IN_COMPOSITE_SYNC (GPIO_NUM_21) // Compsite sync input (If changed change also in asm loop)
+#define IN_UPLOAD_BUTTON (GPIO_NUM_0) // Upload button
 
 #define RMT_SCREEN_DIM_CHANNEL    	RMT_CHANNEL_1     /*!< RMT channel for screen*/
 #define RMT_TRIGGER_CHANNEL			RMT_CHANNEL_3     /*!< RMT channel for trigger */
 #define RMT_DELAY_TRIGGER_CHANNEL	RMT_CHANNEL_5     /*!< RMT channel for delayed trigger */
+#if CONFIG_FREERTOS_UNICORE
+#define RMT_BACKGROUND_CHANNEL		RMT_CHANNEL_0     // Channel 7 seems bad for some reason in this config
+#else
 #define RMT_BACKGROUND_CHANNEL		RMT_CHANNEL_7     /*!< RMT channel for menu background */
+#endif
 
 #define LEDC_WHITE_LEVEL_TIMER      LEDC_TIMER_0
 #define LEDC_WHITE_LEVEL_MODE       LEDC_HIGH_SPEED_MODE
@@ -59,26 +79,37 @@ extern "C"
 #define LEDC_WHITE_LEVEL_CHANNEL    LEDC_CHANNEL_0
 #define WHITE_LEVEL_STEP			248				  // About 0.1V steps
 
-// Change these if using with NTSC
+#define HOME_TIME_UNTIL_FIRMWARE_UPDATE 10000
+
 #define TIMING_RETICULE_WIDTH 75.0f // Generates a circle in PAL but might need adjusting for NTSC (In 80ths of a microsecond)
 #define TIMING_BACK_PORCH 8*80		// In 80ths of a microsecond	(Should be about 6*80)
 #define TIMING_LINE_DURATION  8*465 // In 80ths of a microsecond  (Should be about 52*80 but need to clip when off edge)
+#define TIMING_LINE_DURATION_NTSC  8*460 // Not correct. Backporch should be altered instead
 #define TIMING_BLANKED_LINES 24		// Should be about 16?
 #define TIMING_VISIBLE_LINES 250	// Should be 288
-#define TIMING_VSYNC_THRESHOLD (80*16) // If sync is longer than this then doing a vertical sync
+#define TIMING_VISIBLE_LINES_NTSC 202	// Should be 240
+#define TIMING_VSYNC_THRESHOLD (40*16) // If sync is longer than this then doing a vertical sync
+#define TIMING_SHORT_SYNC_THRESHOLD (40*3) // If sync is shorter than this it's a short sync
 #define TEXT_START_LINE 105
 #define TEXT_END_LINE (TEXT_START_LINE + 80)
-#define LOGO_START_LINE (TIMING_BLANKED_LINES + 25)
+#define LOGO_START_LINE (TIMING_BLANKED_LINES + 24)
 #define LOGO_END_LINE (LOGO_START_LINE + 200)
 #define MENU_START_MARGIN 100		// In 80th of microsecond
 #define NUM_TEXT_SUBLINES 20		// Vertical resolution of font
 #define NUM_TEXT_ROWS 10			// Num rows of text
 #define NUM_TEXT_COLUMNS 20			// Num characters across screen
 #define NUM_TEXT_BORDER_LINES 2		// Blank lines between lines of text
-#define MENU_START_LINE (TIMING_BLANKED_LINES + 25)
+#define MENU_START_LINE (TIMING_BLANKED_LINES + 24)
 #define MENU_END_LINE (MENU_START_LINE + NUM_TEXT_ROWS * (NUM_TEXT_SUBLINES + NUM_TEXT_BORDER_LINES))
 #define FONT_WIDTH 160				// In 80th of microsecond
 #define MENU_BORDER 40				// In 80th of microsecond
+#define NTSC_LINE_OFFSET 24			// Remove border lines to recentre (affects Menu/"Text"/Logo etc)
+
+#define SAVESTATE_VERSION 1
+
+#define PERSISTANT_POWER_ON_VALUE		0xCDC00000ull
+#define PERSISTANT_FIRMWARE_UPDATE_MODE	0xCDC10000ull
+#define PERSISTANT_FIRMWARE_DONE_UPDATE	0xCDC20000ull
 
 #define ARRAY_NUM(x) (sizeof(x)/sizeof(x[0]))
 #define MIN(a,b) ((a)<(b)?(a):(b))
@@ -88,7 +119,8 @@ enum EUIState
 {
 	kUIState_Playing,
 	kUIState_InMenu,
-	kUIState_CalibrationMode
+	kUIState_CalibrationMode,
+	kUIState_FirmwareUpdate
 };
 
 enum MenuControl
@@ -125,9 +157,34 @@ static int CalibrationDelay = 0;
 static int LastActivePlayer = 0;
 static int WhiteLevel = 3225;	// Should produce test voltage of 1.3V (good for composite video)
 static unsigned char TextBuffer[NUM_TEXT_ROWS][NUM_TEXT_COLUMNS];
+static bool bNTSC = true;
 
 bool MenuInput(MenuControl Input, class PlayerInput *MenuPlayer);
+void InitializeFirmwareUpdateScreen();
 void SetMenuState();
+
+void SetPersistantStorage(uint64_t PersistantValue)
+{
+	timer_set_counter_value(TIMER_GROUP_1, TIMER_0, PersistantValue);
+}
+
+uint64_t GetPersistantStorage()
+{
+	uint64_t TimerValue = 0;
+	timer_get_counter_value(TIMER_GROUP_1, TIMER_0, &TimerValue);
+	return TimerValue;
+}
+
+void InitPersistantStorage()
+{
+	// Timers aren't re-initialised by esp_restart()
+	// Used to restart into firmware update mode
+	timer_pause(TIMER_GROUP_1, TIMER_0);
+	if (rtc_get_reset_reason(0) == POWERON_RESET)
+	{
+		SetPersistantStorage(PERSISTANT_POWER_ON_VALUE);
+	}
+}
 
 class PlayerInput
 {
@@ -168,6 +225,8 @@ public:
 		PlayerIdx = PlayerNum;
 		CalibrationPhase = 4;
 		DoneCalibration = false;
+		SpotX = ~0;
+		SpotY = ~0;
 	}
 
 	void Tick()
@@ -199,6 +258,9 @@ public:
 				}
 			}
 
+			int VisibleLines = bNTSC ? TIMING_VISIBLE_LINES_NTSC : TIMING_VISIBLE_LINES;
+			int LineDuration = bNTSC ? TIMING_LINE_DURATION_NTSC : TIMING_LINE_DURATION;
+
 			if (UIState == kUIState_CalibrationMode && CalibrationPhase < 4)
 			{
 				ImageData = &ImageAim[0][0];
@@ -210,16 +272,16 @@ public:
 						ReticuleStartLineNum[PlayerIdx] = TIMING_BLANKED_LINES;
 						break;
 					case 1:
-						ReticuleXPosition[PlayerIdx] = TIMING_BACK_PORCH + TIMING_LINE_DURATION;
+						ReticuleXPosition[PlayerIdx] = TIMING_BACK_PORCH + LineDuration;
 						ReticuleStartLineNum[PlayerIdx] = TIMING_BLANKED_LINES;
 						break;
 					case 2:
 						ReticuleXPosition[PlayerIdx] = TIMING_BACK_PORCH;
-						ReticuleStartLineNum[PlayerIdx] = TIMING_BLANKED_LINES + TIMING_VISIBLE_LINES;
+						ReticuleStartLineNum[PlayerIdx] = TIMING_BLANKED_LINES + VisibleLines;
 						break;
 					case 3:
-						ReticuleXPosition[PlayerIdx] = TIMING_BACK_PORCH + TIMING_LINE_DURATION;
-						ReticuleStartLineNum[PlayerIdx] = TIMING_BLANKED_LINES + TIMING_VISIBLE_LINES;
+						ReticuleXPosition[PlayerIdx] = TIMING_BACK_PORCH + LineDuration;
+						ReticuleStartLineNum[PlayerIdx] = TIMING_BLANKED_LINES + VisibleLines;
 						break;
 
 				}
@@ -233,25 +295,32 @@ public:
 					{
 						Spot = RemapVector(Spot);
 						Spot = Spot * 1023.0f;
-						ReticuleXPosition[PlayerIdx] = TIMING_BACK_PORCH + (TIMING_LINE_DURATION*(int)Spot.X) / 1024;
-						ReticuleStartLineNum[PlayerIdx] = TIMING_BLANKED_LINES + (TIMING_VISIBLE_LINES*(int)Spot.Y) / 1024;
-
+						ReticuleXPosition[PlayerIdx] = TIMING_BACK_PORCH + (LineDuration*(int)Spot.X) / 1024;
+						ReticuleStartLineNum[PlayerIdx] = TIMING_BLANKED_LINES + (VisibleLines*(int)Spot.Y) / 1024;
+						SpotX = (uint16_t)Spot.X;
+						SpotY = (uint16_t)Spot.Y;
 					}
 					else
 					{
 						ReticuleStartLineNum[PlayerIdx] = 1000; // Don't draw
+						SpotX = ~0;
+						SpotY = ~0;
 					}
 				}
 				else
 				{
 					if (Data->IRSpot[0].X != 0x3FF || Data->IRSpot[0].Y != 0x3FF)
 					{
-						ReticuleXPosition[PlayerIdx] = TIMING_BACK_PORCH + (TIMING_LINE_DURATION*(1023 - Data->IRSpot[0].X)) / 1024;
-						ReticuleStartLineNum[PlayerIdx] = TIMING_BLANKED_LINES + (TIMING_VISIBLE_LINES*(Data->IRSpot[0].Y + Data->IRSpot[0].Y / 3)) / 1024;
+						ReticuleXPosition[PlayerIdx] = TIMING_BACK_PORCH + (LineDuration*(1023 - Data->IRSpot[0].X)) / 1024;
+						ReticuleStartLineNum[PlayerIdx] = TIMING_BLANKED_LINES + (VisibleLines*(Data->IRSpot[0].Y + Data->IRSpot[0].Y / 3)) / 1024;
+						SpotX = Data->IRSpot[0].X;
+						SpotY = Data->IRSpot[0].Y;
 					}
 					else
 					{
 						ReticuleStartLineNum[PlayerIdx] = 1000; // Don't draw
+						SpotX = ~0;
+						SpotY = ~0;
 					}
 				}
 			}
@@ -285,6 +354,21 @@ public:
 	bool ButtonWasPressed(int ButtonSelect)
 	{
 		return (OldButtons & ButtonSelect) != 0;
+	}
+	
+	uint16_t GetSpotX()
+	{
+		return SpotX;
+	}
+	
+	uint16_t GetSpotY()
+	{
+		return SpotY;
+	}
+
+	uint16_t GetButtons()
+	{
+		return OldButtons;
 	}
 
 	void ResetCalibration()
@@ -365,13 +449,86 @@ private:
 	int CalibrationPhase;
 	Vector2D CalibrationData[4];
 	bool DoneCalibration;
+	uint16_t SpotX;
+	uint16_t SpotY;
 };
+
+void SaveMenuState()
+{
+	int32_t CurrentState = 0;
+	CurrentState = SAVESTATE_VERSION;
+	CurrentState = (CurrentState << 2) | CursorSize;
+	CurrentState = (CurrentState << 1) | Coop;
+	CurrentState = (CurrentState << 7) | DelayDecimal;
+	CurrentState = (CurrentState << 6) | WhiteLevelDecimal;
+	CurrentState = (CurrentState << 2) | CursorBrightness;
+	CurrentState = (CurrentState << 3) | IOType;
+
+	nvs_handle NVSHandle;
+	if (nvs_open("lightgunverter", NVS_READWRITE, &NVSHandle) == ESP_OK)
+	{
+		int32_t State = 0;
+		if (nvs_get_i32(NVSHandle, "menu_config", &State) != ESP_OK)
+		{
+			State = 0;
+		}
+		if (CurrentState != State)
+		{
+			if (nvs_set_i32(NVSHandle, "menu_config", CurrentState) == ESP_OK)
+			{
+				printf("Saved menu config\n");
+				nvs_commit(NVSHandle);
+			}
+		}
+		nvs_close(NVSHandle);
+	}
+}
+
+void SetDefaultMenuState()
+{
+	IOType = 0;
+	CursorBrightness = 3;
+	WhiteLevelDecimal = 13;
+	DelayDecimal = 0;
+	Coop = 0;
+	CursorSize = 1;
+}
+
+void RestoreMenuState()
+{
+	nvs_handle NVSHandle;
+	if (nvs_open("lightgunverter", NVS_READONLY, &NVSHandle) == ESP_OK)
+	{
+		int32_t State = 0;
+		if (nvs_get_i32(NVSHandle, "menu_config", &State) == ESP_OK)
+		{
+			IOType = (State & 7); State >>= 3;
+			CursorBrightness = (State & 3); State >>= 2;
+			WhiteLevelDecimal = (State & 63); State >>= 6;
+			DelayDecimal = (State & 127); State >>= 7;
+			Coop = (State & 1); State >>= 1;
+			CursorSize = (State & 3); State >>= 2;
+
+			if (State != SAVESTATE_VERSION || IOType > 4 || CursorBrightness > 3 || WhiteLevelDecimal > 33 || DelayDecimal > 99 || CursorSize > 3)
+			{
+				printf("Menu state seems corrupt: Version=%d Data=%d/%d/%d/%d/%d/%d\n", State, IOType, CursorBrightness, WhiteLevelDecimal, DelayDecimal, CursorSize, Coop);
+				SetDefaultMenuState();
+			}
+			else
+			{
+				printf("Restored menu state\n");
+			}
+		}
+		nvs_close(NVSHandle);
+	}
+}
 
 void WiimoteTask(void *pvParameters)
 {
 	bool WasPlayer1Button = false;
 	bool WasPlayer2Button = false;
 	bool WasHomeButton = false;
+	int HomeButtonTimer = 0;
 	printf("WiimoteTask running on core %d\n", xPortGetCoreID());
 	GWiimoteManager.Init();
 	PlayerInput Player1(0);
@@ -386,9 +543,14 @@ void WiimoteTask(void *pvParameters)
 		if (bHomePressed && !WasHomeButton)
 		{
 			if (UIState == kUIState_InMenu)
+			{
+				SaveMenuState();
 				UIState = kUIState_Playing;
+			}
 			else if (UIState == kUIState_Playing)
+			{
 				UIState = kUIState_InMenu;
+			}
 		}
 		WasHomeButton = bHomePressed;
 
@@ -425,25 +587,82 @@ void WiimoteTask(void *pvParameters)
 			}
 		}
 
-		bool Player1Button = Player1.ButtonWasPressed(WiimoteData::kButton_A | WiimoteData::kButton_B);
-		bool Player2Button = Player2.ButtonWasPressed(WiimoteData::kButton_A | WiimoteData::kButton_B);
+		bool Player1AButton = Player1.ButtonWasPressed(WiimoteData::kButton_A);
+		bool Player1BButton = Player1.ButtonWasPressed(WiimoteData::kButton_B);
+		bool Player2AButton = Player2.ButtonWasPressed(WiimoteData::kButton_A);
+		bool Player2BButton = Player2.ButtonWasPressed(WiimoteData::kButton_B);
+		bool Player1Buttons = Player1AButton || Player1BButton;	
+		bool Player2Buttons = Player2AButton || Player2BButton;	
+		
 		if (Coop)
-		{
-			gpio_set_level(OUT_PLAYER1_TRIGGER_PULLED, Player1Button || Player2Button);
-			gpio_set_level(OUT_PLAYER2_TRIGGER_PULLED, false);
-			if (Player1Button && !WasPlayer1Button)
+		{	
+			if (Player1Buttons && !WasPlayer1Button)
 				LastActivePlayer = 0;
-			else if (Player2Button && !WasPlayer2Button)
+			else if (Player2Buttons && !WasPlayer2Button)
 				LastActivePlayer = 1;
+
+			Player1AButton |= Player2AButton;
+			Player2AButton |= Player1AButton;
+			
+			Player1BButton |= Player2BButton;
+			Player2BButton |= Player1BButton;
+		}
+		
+		WasPlayer1Button = Player1Buttons;
+		WasPlayer2Button = Player2Buttons;
+
+		if (IOType != 4)
+		{
+			bool bInvert = ((IOType & 2) != 0);
+			gpio_matrix_out(OUT_PLAYER1_TRIGGER1_PULLED, SIG_GPIO_OUT_IDX, bInvert, false);
+			gpio_matrix_out(OUT_PLAYER1_TRIGGER2_PULLED, SIG_GPIO_OUT_IDX, bInvert, false);
+			gpio_matrix_out(OUT_PLAYER2_TRIGGER1_PULLED, SIG_GPIO_OUT_IDX, bInvert, false);
+			gpio_matrix_out(OUT_PLAYER2_TRIGGER2_PULLED, SIG_GPIO_OUT_IDX, bInvert, false);
+
+			if (IOType & 1)
+			{
+				gpio_set_level(OUT_PLAYER1_TRIGGER1_PULLED, Player1BButton);
+				gpio_set_level(OUT_PLAYER1_TRIGGER2_PULLED, Player1AButton);
+				gpio_set_level(OUT_PLAYER2_TRIGGER1_PULLED, Player2BButton);
+				gpio_set_level(OUT_PLAYER2_TRIGGER2_PULLED, Player2AButton);
+			}
+			else
+			{
+				gpio_set_level(OUT_PLAYER1_TRIGGER1_PULLED, Player1AButton);
+				gpio_set_level(OUT_PLAYER1_TRIGGER2_PULLED, Player1BButton);
+				gpio_set_level(OUT_PLAYER2_TRIGGER1_PULLED, Player2AButton);
+				gpio_set_level(OUT_PLAYER2_TRIGGER2_PULLED, Player2BButton);
+			}
 		}
 		else
 		{
-			gpio_set_level(OUT_PLAYER1_TRIGGER_PULLED, Player1Button);
-			gpio_set_level(OUT_PLAYER2_TRIGGER_PULLED, Player2Button);
-			LastActivePlayer = 0;
+			if (UART1.status.txfifo_cnt == 0) // UART FIFO is zero
+			{
+				uint8_t ToTransmit[16];
+				for (int i = 0; i < 2; i++)
+				{
+					PlayerInput *Player = i ? &Player2 : &Player1;
+					uint16_t SpotX = Player->GetSpotX();
+					uint16_t SpotY = Player->GetSpotY();
+					uint16_t Buttons = Player->GetButtons();
+					ToTransmit[8 * i + 0] = 0x80;
+					ToTransmit[8 * i + 1] = i;
+					ToTransmit[8 * i + 2] = (SpotX >> 7) & 0x7F;
+					ToTransmit[8 * i + 3] = (SpotX & 0x7F);
+					ToTransmit[8 * i + 4] = (SpotY >> 7) & 0x7F;
+					ToTransmit[8 * i + 5] = (SpotY & 0x7F);
+					ToTransmit[8 * i + 6] = (Buttons >> 7) & 0x7F;
+					ToTransmit[8 * i + 7] = (Buttons & 0x7F);
+				}
+
+				gpio_matrix_out(OUT_PLAYER1_TRIGGER1_PULLED, U1TXD_OUT_IDX, false, false);
+				gpio_matrix_out(OUT_PLAYER1_TRIGGER2_PULLED, U1TXD_OUT_IDX, false, false);
+				gpio_matrix_out(OUT_PLAYER2_TRIGGER1_PULLED, U1TXD_OUT_IDX, false, false);
+				gpio_matrix_out(OUT_PLAYER2_TRIGGER2_PULLED, U1TXD_OUT_IDX, false, false);
+
+				uart_tx_chars(UART_NUM_1, (char*)ToTransmit, sizeof(ToTransmit));
+			}
 		}
-		WasPlayer1Button = Player1Button;
-		WasPlayer2Button = Player2Button;
 
 		if (LogoTime > 0)
 		{
@@ -455,6 +674,27 @@ void WiimoteTask(void *pvParameters)
 		{
 			gpio_set_level(OUT_FRONT_PANEL_LED1, Player1.IsConnected() ? 1 : 0);
 			gpio_set_level(OUT_FRONT_PANEL_LED2, Player2.IsConnected() ? 1 : 0);
+		}
+
+		if (!bHomePressed)
+		{
+			HomeButtonTimer = 0;
+		}
+		else
+		{
+			HomeButtonTimer++;
+			if (HomeButtonTimer > HOME_TIME_UNTIL_FIRMWARE_UPDATE)
+			{
+				UIState = kUIState_FirmwareUpdate;
+				InitializeFirmwareUpdateScreen();
+			}
+		}
+		if ((UIState == kUIState_FirmwareUpdate && (Player1.ButtonWasPressed(WiimoteData::kButton_A) || Player2.ButtonWasPressed(WiimoteData::kButton_A))) || !gpio_get_level(IN_UPLOAD_BUTTON))
+		{
+			printf("Restarting\n");
+			GWiimoteManager.DeInit();
+			SetPersistantStorage(PERSISTANT_FIRMWARE_UPDATE_MODE);
+			esp_restart();
 		}
 
 		vTaskDelay(1);
@@ -538,7 +778,7 @@ static void RMTPeripheralInit()
 static void PWMPeripherialInit()
 {
 	ledc_timer_config_t WhiteLevelPWMTimer;
-	WhiteLevelPWMTimer.bit_num = LEDC_TIMER_13_BIT;
+	WhiteLevelPWMTimer.duty_resolution = LEDC_TIMER_13_BIT;
 	WhiteLevelPWMTimer.freq_hz = 9000;
 	WhiteLevelPWMTimer.speed_mode = LEDC_WHITE_LEVEL_MODE;
 	WhiteLevelPWMTimer.timer_num = LEDC_WHITE_LEVEL_TIMER;
@@ -613,13 +853,15 @@ int IRAM_ATTR SetupLine(uint32_t Bank, const int *StartingLine)
 {
 	int Active = 0;
 
+	int NormalizedCurrentLine = bNTSC ? CurrentLine + NTSC_LINE_OFFSET : CurrentLine; // Remove border
+
 	rmt_item32_t EndTerminator;
 	EndTerminator.level0 = 1;
 	EndTerminator.duration0 = 0;
 	EndTerminator.level1 = 1;
 	EndTerminator.duration1 = 0;
 	
-	if (UIState == kUIState_InMenu && CurrentLine >= MENU_START_LINE && CurrentLine < MENU_END_LINE)
+	if ((UIState == kUIState_InMenu || UIState == kUIState_FirmwareUpdate) && NormalizedCurrentLine >= MENU_START_LINE && NormalizedCurrentLine < MENU_END_LINE)
 	{
 		if (CurrentTextSubLine < NUM_TEXT_SUBLINES)
 		{
@@ -665,9 +907,9 @@ int IRAM_ATTR SetupLine(uint32_t Bank, const int *StartingLine)
 				}
 			}
 		}
-		if (LogoMode && CurrentLine >= LOGO_START_LINE && CurrentLine < LOGO_END_LINE)
+		if (LogoMode && NormalizedCurrentLine >= LOGO_START_LINE && NormalizedCurrentLine < LOGO_END_LINE)
 		{
-			int LineIdx = CurrentLine - LOGO_START_LINE;
+			int LineIdx = NormalizedCurrentLine - LOGO_START_LINE;
 			for (int i = 0; i < 8; i++)
 			{
 				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[i].val = ImageLogo[LineIdx][i];
@@ -675,9 +917,9 @@ int IRAM_ATTR SetupLine(uint32_t Bank, const int *StartingLine)
 			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[8].val = EndTerminator.val;
 			Active = 1;
 		}
-		else if (TextMode && CurrentLine >= TEXT_START_LINE && CurrentLine < TEXT_END_LINE)
+		else if (TextMode && NormalizedCurrentLine >= TEXT_START_LINE && NormalizedCurrentLine < TEXT_END_LINE)
 		{
-			int LineIdx = CurrentLine - TEXT_START_LINE;
+			int LineIdx = NormalizedCurrentLine - TEXT_START_LINE;
 			for (int i = 0; i < 8; i++)
 			{
 				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[i].val = ImageData[8*LineIdx + i];
@@ -779,7 +1021,7 @@ void IRAM_ATTR DoOutputSelection(uint32_t Bank, bool bInMenu)
 	}
 }
 
-void IRAM_ATTR CompositeSyncPositiveEdge(uint32_t &Bank, int &Active, const int *CachedStartingLines)
+void IRAM_ATTR CompositeSyncPositiveEdge(uint32_t &Bank, int &Active)
 {
 	if (Active != 0 && CurrentLine != 0)
 	{
@@ -788,7 +1030,6 @@ void IRAM_ATTR CompositeSyncPositiveEdge(uint32_t &Bank, int &Active, const int 
 	}
 	CurrentLine++;
 	Bank = 1 - Bank;
-	Active = SetupLine(Bank, CachedStartingLines);
 }
 
 void IRAM_ATTR SpotGeneratorInnerLoop()
@@ -797,16 +1038,28 @@ void IRAM_ATTR SpotGeneratorInnerLoop()
 	uint32_t Bank = 0;
 	int Active = 0;
 	int CachedStartingLines[2];
+	bool bNeedSetup = false;
+	TIMERG1.hw_timer[timer_idx].reload = 1;
 	while (true)
 	{
-		TIMERG1.hw_timer[timer_idx].reload = 1;
 		while ((GPIO.in & BIT(IN_COMPOSITE_SYNC)) != 0); // while sync is still happening
 		TIMERG1.hw_timer[timer_idx].update = 1;
 		// Don't really need the 64-bit time but only reading cnt_low seems to caused it to sometimes not update. Adding some nops also worked but not as reliably as this
 		uint64_t Time = 2*(((uint64_t)TIMERG1.hw_timer[timer_idx].cnt_high<<32) | TIMERG1.hw_timer[timer_idx].cnt_low); // Timer's clk is half APB hence 2x.
-		while ((GPIO.in & BIT(IN_COMPOSITE_SYNC)) == 0); // while not sync
-		if (Time > TIMING_VSYNC_THRESHOLD)
+		if (bNeedSetup)
 		{
+			Active = SetupLine(Bank, CachedStartingLines);
+			bNeedSetup = false;
+		}
+		while ((GPIO.in & BIT(IN_COMPOSITE_SYNC)) == 0); // while not sync
+		TIMERG1.hw_timer[timer_idx].reload = 1;
+		if (Time > TIMING_VSYNC_THRESHOLD || Time < TIMING_SHORT_SYNC_THRESHOLD)
+		{
+			if (CurrentLine > 200 && CurrentLine < 400)
+			{
+				bNTSC = (CurrentLine < 275); // PAL should be something like 300 and NTSC 250
+			}
+
 			CurrentLine = 0;
 			CurrentTextLine = 0;
 			CurrentTextSubLine = 0;
@@ -817,7 +1070,8 @@ void IRAM_ATTR SpotGeneratorInnerLoop()
 		}
 		else
 		{
-			CompositeSyncPositiveEdge(Bank, Active, CachedStartingLines);
+			CompositeSyncPositiveEdge(Bank, Active);
+			bNeedSetup = true;
 		}
 	}
 }
@@ -872,16 +1126,16 @@ void SetMenuState()
 	}
 }
 
-void SpotGeneratorTask(void *pvParameters)
+void InitSpotGenerator()
 {
-	printf("SpotGeneratorTask starting on core %d\n", xPortGetCoreID());
-
-	ESP_ERROR_CHECK(gpio_set_direction(IN_COMPOSITE_SYNC, GPIO_MODE_INPUT));
-
-	SetReticuleSize();
-
-	PWMPeripherialInit();
-
+	gpio_config_t CSyncGPIOConfig;
+	CSyncGPIOConfig.intr_type = GPIO_INTR_DISABLE;
+	CSyncGPIOConfig.pin_bit_mask = BIT(IN_COMPOSITE_SYNC);
+	CSyncGPIOConfig.mode = GPIO_MODE_INPUT;
+	CSyncGPIOConfig.pull_up_en = GPIO_PULLUP_DISABLE;
+	CSyncGPIOConfig.pull_down_en = GPIO_PULLDOWN_DISABLE;
+	gpio_config(&CSyncGPIOConfig);
+	
 	RMTPeripheralInit();
 	rmt_item32_t RMTInitialValues[1];
 	RMTInitialValues[0].level0 = 1;
@@ -906,25 +1160,26 @@ void SpotGeneratorTask(void *pvParameters)
 	RMTMenuBackground[1].duration1 = 0;
 	rmt_write_items(RMT_BACKGROUND_CHANNEL, RMTMenuBackground, 2, false);	// Prime the RMT
 
-	gpio_config_t CSyncGPIOConfig;
-	CSyncGPIOConfig.intr_type = GPIO_INTR_DISABLE;
-	CSyncGPIOConfig.pin_bit_mask = BIT(IN_COMPOSITE_SYNC);
-	CSyncGPIOConfig.mode = GPIO_MODE_INPUT;
-	CSyncGPIOConfig.pull_up_en = GPIO_PULLUP_DISABLE;
-	CSyncGPIOConfig.pull_down_en = GPIO_PULLDOWN_DISABLE;
-	gpio_config(&CSyncGPIOConfig);
-
 	timer_group_t timer_group = TIMER_GROUP_1;
 	timer_idx_t timer_idx = TIMER_1;
 	timer_config_t config;
 	config.alarm_en = TIMER_ALARM_DIS;
 	config.auto_reload = TIMER_AUTORELOAD_DIS;
 	config.counter_dir = TIMER_COUNT_UP;
-	config.divider = 1;
+	config.divider = 2;
 	config.intr_type = TIMER_INTR_LEVEL;
 	config.counter_en = TIMER_START;
 	timer_init(timer_group, timer_idx, &config);
 	timer_set_counter_value(timer_group, timer_idx, 0ULL);
+}
+
+void SpotGeneratorTask(void *pvParameters)
+{
+	printf("SpotGeneratorTask starting on core %d\n", xPortGetCoreID());
+
+	SetReticuleSize();
+
+	InitSpotGenerator();
 
 	vTaskEndScheduler(); // Disable FreeRTOS on this core as we don't need it anymore
 
@@ -935,14 +1190,29 @@ void InitializeMiscGPIO()
 {
 	gpio_config_t GPIOConfig;
 	GPIOConfig.intr_type = GPIO_INTR_DISABLE;
-	GPIOConfig.pin_bit_mask = BIT(OUT_PLAYER1_TRIGGER_PULLED);
+	GPIOConfig.pin_bit_mask = BIT(OUT_PLAYER1_TRIGGER1_PULLED);
 	GPIOConfig.mode = GPIO_MODE_OUTPUT;
 	GPIOConfig.pull_up_en = GPIO_PULLUP_DISABLE;
 	GPIOConfig.pull_down_en = GPIO_PULLDOWN_DISABLE;
 	gpio_config(&GPIOConfig);
-
-	GPIOConfig.pin_bit_mask = BIT(OUT_PLAYER2_TRIGGER_PULLED);
+	
+	GPIOConfig.pin_bit_mask = BIT(OUT_PLAYER1_TRIGGER2_PULLED);
 	gpio_config(&GPIOConfig);
+
+	GPIOConfig.pin_bit_mask = BIT(OUT_PLAYER2_TRIGGER1_PULLED);
+	gpio_config(&GPIOConfig);
+	
+	GPIOConfig.pin_bit_mask = BIT(OUT_PLAYER2_TRIGGER2_PULLED);
+	gpio_config(&GPIOConfig);
+	
+	// Set all player LEDs to 0 on startup so don't burn out if on for long periods (need pulldown)
+	GPIOConfig.pin_bit_mask = BIT(OUT_PLAYER1_LED_DELAYED);
+	gpio_config(&GPIOConfig);
+	gpio_set_level(OUT_PLAYER1_LED_DELAYED, 0);
+
+	GPIOConfig.pin_bit_mask = BIT(OUT_PLAYER2_LED_DELAYED);
+	gpio_config(&GPIOConfig);
+	gpio_set_level(OUT_PLAYER2_LED_DELAYED, 0);
 	
 	GPIOConfig.pin_bit_mask = BIT(OUT_WHITE_OVERRIDE);
 	GPIOConfig.mode = GPIO_MODE_INPUT;	// Let white level detect from signal
@@ -954,9 +1224,29 @@ void InitializeMiscGPIO()
 	gpio_config(&GPIOConfig);
 	gpio_set_level(OUT_FRONT_PANEL_LED1, 1);
 	
-	GPIOConfig.pin_bit_mask = BIT(OUT_FRONT_PANEL_LED2);
+	GPIOConfig.pin_bit_mask = 1ull<<OUT_FRONT_PANEL_LED2;
 	gpio_config(&GPIOConfig);
 	gpio_set_level(OUT_FRONT_PANEL_LED2, 1);
+	
+	gpio_config_t UploadButtonGPIOConfig;
+	UploadButtonGPIOConfig.intr_type = GPIO_INTR_DISABLE;
+	UploadButtonGPIOConfig.pin_bit_mask = BIT(IN_UPLOAD_BUTTON);
+	UploadButtonGPIOConfig.mode = GPIO_MODE_INPUT;
+	UploadButtonGPIOConfig.pull_up_en = GPIO_PULLUP_ENABLE;
+	UploadButtonGPIOConfig.pull_down_en = GPIO_PULLDOWN_DISABLE;
+	gpio_config(&UploadButtonGPIOConfig);
+
+	uart_config_t UARTConfig = {
+        .baud_rate = 9600,
+        .data_bits = UART_DATA_8_BITS,
+        .parity    = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+		.rx_flow_ctrl_thresh = 0,
+		.use_ref_tick = false
+    };
+    uart_param_config(UART_NUM_1, &UARTConfig);
+    uart_driver_install(UART_NUM_1, UART_FIFO_LEN * 2, 0, 0, NULL, 0);
 }
 
 void ConvertText(const char *Text, int Row, int Column)
@@ -1010,9 +1300,11 @@ void UpdateMenu()
 	}
 	switch (IOType)
 	{
-		case 0: ConvertText("NORMAL", 7, Tab); break;
-		case 1: ConvertText("A + B ", 7, Tab); break;
-		case 2: ConvertText("B + A ", 7, Tab); break;
+		case 0: ConvertText("OUT AB", 7, Tab); break;
+		case 1: ConvertText("OUT BA", 7, Tab); break;
+		case 2: ConvertText("INV AB", 7, Tab); break;
+		case 3: ConvertText("INV BA", 7, Tab); break;
+		case 4: ConvertText("SERIAL", 7, Tab); break;
 	}
 	for (int i=2; i<=9; i++)
 	{
@@ -1073,7 +1365,7 @@ bool MenuInput(MenuControl Input, PlayerInput *MenuPlayer)
 			case 4: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, DelayDecimal, 0, 99); break;
 			case 5: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, WhiteLevelDecimal, 0, 33); break;
 			case 6: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, CursorBrightness, 1, 3); break;
-			case 7: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, IOType, 0, 2); break;
+			case 7: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, IOType, 0, 4); break;
 		}
 		if (Input == kMenu_Select)
 		{
@@ -1108,15 +1400,296 @@ void InitializeMenu()
 	SetMenuState();
 }
 
+void InitializeFirmwareUpdateScreen()
+{
+	ConvertText("  FIRMWARE UPDATER  ", 0, 0);
+	ConvertText("                    ", 1, 0);
+	ConvertText(" PRESS A TO RESTART ", 2, 0);
+	ConvertText(" THEN CONNECT TO... ", 3, 0);
+	ConvertText("                    ", 4, 0);
+	ConvertText("        SSID:       ", 5, 0);
+	ConvertText("   LIGHTGUNVERTER   ", 6, 0);
+	ConvertText("                    ", 7, 0);
+	ConvertText("      WEB PAGE:     ", 8, 0);
+	ConvertText("     192.168.4.1    ", 9, 0);
+}
+
+static EventGroupHandle_t wifi_event_group;
+const int WIFI_CONNECTED_BIT = BIT0;
+
+static esp_err_t event_handler(void *ctx, system_event_t *event)
+{
+	switch(event->event_id)
+	{
+		case SYSTEM_EVENT_AP_STACONNECTED:
+			xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
+			break;
+		case SYSTEM_EVENT_AP_STADISCONNECTED:
+			xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT);
+			break;
+		default:
+			break;
+	}
+    return ESP_OK;
+}
+
+void WifiInitAccessPoint()
+{
+	wifi_event_group = xEventGroupCreate();
+
+	tcpip_adapter_init();
+	ESP_ERROR_CHECK(esp_event_loop_init(event_handler, NULL));
+
+	wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+	ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+	wifi_config_t WiFiConfig;
+	strcpy((char*)WiFiConfig.ap.ssid, "LightGunVerter");
+	WiFiConfig.ap.ssid_len = strlen("LightGunVerter");
+	WiFiConfig.ap.password[0] = 0;
+	WiFiConfig.ap.max_connection = 1;
+	WiFiConfig.ap.authmode = WIFI_AUTH_OPEN;
+
+	ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+	ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_AP, &WiFiConfig));
+	ESP_ERROR_CHECK(esp_wifi_start());
+}
+
+void WifiStartListening()
+{
+	static char WifiBuffer[2048];
+
+	EventBits_t ConnectBits = 0;
+	bool bFlash = false;
+	while ((ConnectBits & WIFI_CONNECTED_BIT) == 0)
+	{
+		ConnectBits = xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_BIT, false, true, 250);
+		gpio_set_level(OUT_FRONT_PANEL_LED1, bFlash?1:0);
+		gpio_set_level(OUT_FRONT_PANEL_LED2, bFlash?0:1);
+		bFlash = !bFlash;
+	}
+	printf("Something connected\n");
+
+	int Sock = socket(PF_INET, SOCK_STREAM, 0);
+	
+	sockaddr_in SockAddrIn;	
+	memset(&SockAddrIn, 0, sizeof(SockAddrIn));
+	SockAddrIn.sin_family = AF_INET;
+	SockAddrIn.sin_port = htons(80);
+	SockAddrIn.sin_addr.s_addr = htonl(INADDR_ANY);
+	bind(Sock, (struct sockaddr *)&SockAddrIn, sizeof(SockAddrIn));
+	
+	listen(Sock, 5);
+	
+	printf("Listening\n");
+
+	bool bUpdated = false;
+	while (!bUpdated)
+	{
+		gpio_set_level(OUT_FRONT_PANEL_LED1, 0);
+		gpio_set_level(OUT_FRONT_PANEL_LED2, 0);
+
+		sockaddr_in ClientSockAddrIn;
+		socklen_t ClientSockAddrLen = sizeof(ClientSockAddrIn);
+		int ClientSock = accept(Sock, (sockaddr*)&ClientSockAddrIn, &ClientSockAddrLen);
+	
+		gpio_set_level(OUT_FRONT_PANEL_LED1, 1);
+		gpio_set_level(OUT_FRONT_PANEL_LED2, 1);
+		printf("Accepted\n");
+
+		if (ClientSock != -1)
+		{
+			int Recieved = recv(ClientSock, &WifiBuffer, sizeof(WifiBuffer) - 1, 0);
+			if (Recieved > 0)
+			{
+				WifiBuffer[Recieved] = 0;
+				printf("Got: %s\n", WifiBuffer);
+
+				const char* ExpectedRequests[] =
+				{
+					"GET / HTTP/",
+					"GET /index.html HTTP/",
+					"POST / HTTP/",
+					"POST /index.html HTTP/"
+				};
+
+				bool bReturnIndex = false;
+				bool bStartRecieving = false;
+				for (int i = 0; i < ARRAY_NUM(ExpectedRequests); i++)
+				{
+					int Len = strlen(ExpectedRequests[i]);
+					if (Recieved >= Len && strncmp(WifiBuffer, ExpectedRequests[i], Len) == 0)
+					{
+						printf("Matched: %s\n", ExpectedRequests[i]);
+						if (strncmp(WifiBuffer, "POST", 4) == 0)
+							bStartRecieving = true;
+						else
+							bReturnIndex = true;
+						break;
+					}
+				}
+
+				if (bStartRecieving)
+				{
+					int Length = 0;
+					const char* ContentLength = strstr(WifiBuffer, "Content-Length: ");
+					if (ContentLength)
+					{
+						Length = atoi(ContentLength + strlen("Content-Length: "));
+					}
+
+					esp_err_t ErrorCode = ESP_OK;
+					bool bWaitingForStart = true;
+					esp_ota_handle_t UpdateHandle = 0 ;
+					const esp_partition_t *UpdatePartition = esp_ota_get_next_update_partition(nullptr);
+
+					if (Length > 0)
+					{
+						printf("Receiving firmware (Length = %d)\n", Length);
+
+						while (Length > 0)
+						{
+							Recieved = recv(ClientSock, &WifiBuffer, sizeof(WifiBuffer) - 1, 0);
+							if (Recieved <= 0)
+								break;
+
+							WifiBuffer[Recieved] = 0;
+							if (bWaitingForStart)
+							{
+								const char *Start = strstr(WifiBuffer, "LGV_FIRM");
+								if (Start)
+								{
+									printf("Found firmware, starting update\n");
+
+									bWaitingForStart = false;
+    								ErrorCode = esp_ota_begin(UpdatePartition, OTA_SIZE_UNKNOWN, &UpdateHandle);
+
+									const char* StartOfFirmware = Start + strlen("LGV_FIRM");
+									int Afterwards = (WifiBuffer + Recieved) - StartOfFirmware;
+									if (Afterwards > 0)
+									{
+										if (ErrorCode == ESP_OK)
+										{
+											ErrorCode = esp_ota_write(UpdateHandle, StartOfFirmware, Afterwards);
+										}
+									}
+								}
+							}
+							else if (ErrorCode == ESP_OK)
+							{
+								ErrorCode = esp_ota_write(UpdateHandle, WifiBuffer, Recieved);
+							}
+							Length -= Recieved;
+						}
+					}
+
+					if (ErrorCode == ESP_OK)
+					{
+						ErrorCode = esp_ota_end(UpdateHandle);
+					}
+
+					if (ErrorCode == ESP_OK)
+					{
+						ErrorCode = esp_ota_set_boot_partition(UpdatePartition);
+					}
+
+					bool bSuccess = (ErrorCode == ESP_OK && Length == 0 && !bWaitingForStart);
+
+					const char* UpdatedResponse = "HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n<!doctype html><title>LightGunVerter Firmware Update</title><style>*{box-sizing: border-box;}body{margin: 0;}#main{display: flex; min-height: calc(100vh - 40vh);}#main > article{flex: 1;}#main > nav, #main > aside{flex: 0 0 20vw;}#main > nav{order: -1;}header, footer, article, nav, aside{padding: 1em;}header, footer{height: 20vh;}</style><body> <header> <center><h1>LightGunVerter Firmware Update</h1></center> </header> <div id=\"main\"> <nav></nav> <article><p>Firmware update successful. Rebooting...</p></article> <aside></aside> </div></body>";
+					const char* NotUpdatedResponse = "HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n<!doctype html><title>LightGunVerter Firmware Update</title><style>*{box-sizing: border-box;}body{margin: 0;}#main{display: flex; min-height: calc(100vh - 40vh);}#main > article{flex: 1;}#main > nav, #main > aside{flex: 0 0 20vw;}#main > nav{order: -1;}header, footer, article, nav, aside{padding: 1em;}header, footer{height: 20vh;}</style><body> <header> <center><h1>LightGunVerter Firmware Update</h1></center> </header> <div id=\"main\"> <nav></nav> <article><p>Update failed.</p></article> <aside></aside> </div></body>";
+					const char* Response = bSuccess ? UpdatedResponse : NotUpdatedResponse;
+
+					send(ClientSock, Response, strlen(Response), 0);
+
+					bUpdated = bSuccess;
+				}
+				else
+				{
+					printf("Sending response\n");
+					const char* GoodResponse = "HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n<!doctype html><title>LightGunVerter Firmware Update</title><style>*{box-sizing: border-box;}body{margin: 0;}#main{display: flex; min-height: calc(100vh - 40vh);}#main > article{flex: 1;}#main > nav, #main > aside{flex: 0 0 20vw;}#main > nav{order: -1;}header, footer, article, nav, aside{padding: 1em;}header, footer{height: 20vh;}</style><body> <header> <center><h1>LightGunVerter Firmware Update</h1></center> </header> <div id=\"main\"> <nav></nav> <article> <p> Upload new .bin file: <form id=\"uploadbanner\" enctype=\"multipart/form-data\" method=\"post\" action=\"#\"> <input id=\"fileupload\" name=\"myfile\" type=\"file\"/> <input type=\"submit\" value=\"Update\" id=\"submit\"/> </form> </p><p> <b>Do not remove power while updating</b> </p></article> <aside></aside> </div></body>";
+					const char* BadResponse = "HTTP/1.0 404 NOT FOUND\r\nContent-Type: text/html\r\n\r\n<!doctype html><title>Not Found</title><body>Page not found :(</body>";
+					const char* Response = bReturnIndex ? GoodResponse : BadResponse;
+
+					send(ClientSock, Response, strlen(Response), 0);
+				}
+			}
+
+			printf("Close\n");
+			close(ClientSock);
+		}
+	}
+}
+
+#if CONFIG_FREERTOS_UNICORE
+extern "C" int _init_start;
+
+extern "C" void IRAM_ATTR StartAppCPU()
+{
+	asm volatile (\
+			"wsr    %0, vecbase\n" \
+			::"r"(&_init_start));
+
+	ets_set_appcpu_boot_addr(0);
+	cpu_configure_region_protection();
+
+	ets_install_putc1(NULL);
+	ets_install_putc2(NULL);
+
+	portDISABLE_INTERRUPTS();
+	SpotGeneratorInnerLoop();
+}
+#endif
+
 extern "C" void app_main(void)
 {
-	// Magic non-sense to make second core work
-	vTaskDelay(500 / portTICK_PERIOD_MS);
-	nvs_flash_init();
-
 	InitializeMiscGPIO();
+	InitPersistantStorage();
+
+	esp_err_t NVSErr = nvs_flash_init();
+	if (NVSErr == ESP_ERR_NVS_NO_FREE_PAGES)
+	{
+		ESP_ERROR_CHECK(nvs_flash_erase());
+		NVSErr = nvs_flash_init();
+	}
+	ESP_ERROR_CHECK( NVSErr );
+
+	if (GetPersistantStorage() == PERSISTANT_FIRMWARE_UPDATE_MODE)
+	{
+		SetPersistantStorage(PERSISTANT_FIRMWARE_DONE_UPDATE);
+
+		WifiInitAccessPoint();
+		WifiStartListening();
+		vTaskDelay(2000);
+		esp_wifi_stop();
+		esp_wifi_deinit();
+		esp_restart();
+	}
+
+	PWMPeripherialInit();
+	SetDefaultMenuState();
+	RestoreMenuState();
 	InitializeMenu();
 
 	xTaskCreatePinnedToCore(&WiimoteTask, "WiimoteTask", 8192, NULL, 5, NULL, 0);
+
+#if !CONFIG_FREERTOS_UNICORE
 	xTaskCreatePinnedToCore(&SpotGeneratorTask, "SpotGeneratorTask", 2048, NULL, 5, NULL, 1);
+#else
+	SetReticuleSize();
+	InitSpotGenerator();
+
+	printf("Trying to bring app cpu up\n");
+	Cache_Flush(1);
+	Cache_Read_Enable(1);
+	esp_cpu_unstall(1);
+	if (!DPORT_GET_PERI_REG_MASK(DPORT_APPCPU_CTRL_B_REG, DPORT_APPCPU_CLKGATE_EN)) {
+		DPORT_SET_PERI_REG_MASK(DPORT_APPCPU_CTRL_B_REG, DPORT_APPCPU_CLKGATE_EN);
+		DPORT_CLEAR_PERI_REG_MASK(DPORT_APPCPU_CTRL_C_REG, DPORT_APPCPU_RUNSTALL);
+		DPORT_SET_PERI_REG_MASK(DPORT_APPCPU_CTRL_A_REG, DPORT_APPCPU_RESETTING);
+		DPORT_CLEAR_PERI_REG_MASK(DPORT_APPCPU_CTRL_A_REG, DPORT_APPCPU_RESETTING);
+	}
+	ets_set_appcpu_boot_addr((uint32_t)StartAppCPU);
+
+	printf("Should be running\n");
+#endif
 }

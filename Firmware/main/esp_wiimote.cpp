@@ -18,7 +18,7 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "bt.h"
+#include "esp_bt.h"
 #include "esp_wiimote.h"
 
 // Provides a minimal Bluetooth stack for communicating with Wiimotes on ESP32
@@ -158,6 +158,7 @@ public:
 	RingBuffer()
 	{
 		Head = CallbackHead = Tail = 0;
+		bPrintError = true;
 	}
 
 	inline void Put(uint8_t *Msg, uint16_t Length)
@@ -165,9 +166,14 @@ public:
 		int Space = (sizeof(Data) - 1 + Tail - CallbackHead)&(sizeof(Data) - 1);
 		if (Space < Length)
 		{
-			printf("ERROR: Circular buffer couldn't fit message (%d/%d). Dropping.\n", Length, Space);
+			if (bPrintError)
+			{
+				printf("ERROR: Circular buffer couldn't fit message (%d/%d). Dropping.\n", Length, Space);
+			}
+			bPrintError = false;
 			return;
 		}
+		bPrintError = true;
 		WriteByte(Length >> 8);
 		WriteByte(Length);
 		for (int i = 0; i < Length; i++)
@@ -222,6 +228,7 @@ private:
 	volatile int Head;	// Should be updated atomically
 	int Tail;
 	int CallbackHead;
+	bool bPrintError;
 	uint8_t Data[kRingBufferSize];
 };
 
@@ -268,6 +275,12 @@ public:
 		VHCICallbacks.notify_host_send_available = SendReady;
 		VHCICallbacks.notify_host_recv = ReceivePacket;
 		esp_vhci_host_register_callback(&VHCICallbacks);
+	}
+	
+	static void DeInitBluetooth()
+	{
+		esp_bt_controller_disable();
+		esp_bt_controller_deinit();
 	}
 
 	static void SendPacket(uint8_t *Data, uint16_t Length)
@@ -1627,6 +1640,11 @@ WiimoteManager::WiimoteManager()
 void WiimoteManager::Init()
 {
 	ESPBluetooth::InitBluetooth();
+}
+
+void WiimoteManager::DeInit()
+{
+	ESPBluetooth::DeInitBluetooth();
 }
 
 IWiimote* WiimoteManager::CreateNewWiimote()
