@@ -37,6 +37,8 @@ extern "C"
 #include "lwip/dns.h"
 #include "esp_ota_ops.h"
 #include "rom/rtc.h"
+#include "rom/cache.h"
+#include "soc/cpu.h"
 };
 #include "esp_wiimote.h"
 #include "images.h"
@@ -65,7 +67,11 @@ extern "C"
 #define RMT_SCREEN_DIM_CHANNEL    	RMT_CHANNEL_1     /*!< RMT channel for screen*/
 #define RMT_TRIGGER_CHANNEL			RMT_CHANNEL_3     /*!< RMT channel for trigger */
 #define RMT_DELAY_TRIGGER_CHANNEL	RMT_CHANNEL_5     /*!< RMT channel for delayed trigger */
+#if CONFIG_FREERTOS_UNICORE
+#define RMT_BACKGROUND_CHANNEL		RMT_CHANNEL_0     // Channel 7 seems bad for some reason in this config
+#else
 #define RMT_BACKGROUND_CHANNEL		RMT_CHANNEL_7     /*!< RMT channel for menu background */
+#endif
 
 #define LEDC_WHITE_LEVEL_TIMER      LEDC_TIMER_0
 #define LEDC_WHITE_LEVEL_MODE       LEDC_HIGH_SPEED_MODE
@@ -1130,8 +1136,6 @@ void InitSpotGenerator()
 	CSyncGPIOConfig.pull_down_en = GPIO_PULLDOWN_DISABLE;
 	gpio_config(&CSyncGPIOConfig);
 	
-	PWMPeripherialInit();
-
 	RMTPeripheralInit();
 	rmt_item32_t RMTInitialValues[1];
 	RMTInitialValues[0].level0 = 1;
@@ -1616,6 +1620,26 @@ void WifiStartListening()
 	}
 }
 
+#if CONFIG_FREERTOS_UNICORE
+extern "C" int _init_start;
+
+extern "C" void IRAM_ATTR StartAppCPU()
+{
+	asm volatile (\
+			"wsr    %0, vecbase\n" \
+			::"r"(&_init_start));
+
+	ets_set_appcpu_boot_addr(0);
+	cpu_configure_region_protection();
+
+	ets_install_putc1(NULL);
+	ets_install_putc2(NULL);
+
+	portDISABLE_INTERRUPTS();
+	SpotGeneratorInnerLoop();
+}
+#endif
+
 extern "C" void app_main(void)
 {
 	InitializeMiscGPIO();
@@ -1641,10 +1665,31 @@ extern "C" void app_main(void)
 		esp_restart();
 	}
 
+	PWMPeripherialInit();
 	SetDefaultMenuState();
 	RestoreMenuState();
 	InitializeMenu();
 
 	xTaskCreatePinnedToCore(&WiimoteTask, "WiimoteTask", 8192, NULL, 5, NULL, 0);
+
+#if !CONFIG_FREERTOS_UNICORE
 	xTaskCreatePinnedToCore(&SpotGeneratorTask, "SpotGeneratorTask", 2048, NULL, 5, NULL, 1);
+#else
+	SetReticuleSize();
+	InitSpotGenerator();
+
+	printf("Trying to bring app cpu up\n");
+	Cache_Flush(1);
+	Cache_Read_Enable(1);
+	esp_cpu_unstall(1);
+	if (!DPORT_GET_PERI_REG_MASK(DPORT_APPCPU_CTRL_B_REG, DPORT_APPCPU_CLKGATE_EN)) {
+		DPORT_SET_PERI_REG_MASK(DPORT_APPCPU_CTRL_B_REG, DPORT_APPCPU_CLKGATE_EN);
+		DPORT_CLEAR_PERI_REG_MASK(DPORT_APPCPU_CTRL_C_REG, DPORT_APPCPU_RUNSTALL);
+		DPORT_SET_PERI_REG_MASK(DPORT_APPCPU_CTRL_A_REG, DPORT_APPCPU_RESETTING);
+		DPORT_CLEAR_PERI_REG_MASK(DPORT_APPCPU_CTRL_A_REG, DPORT_APPCPU_RESETTING);
+	}
+	ets_set_appcpu_boot_addr((uint32_t)StartAppCPU);
+
+	printf("Should be running\n");
+#endif
 }
