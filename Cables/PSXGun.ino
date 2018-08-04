@@ -8,14 +8,22 @@
 #define IN_CLK SCK
 #define OUT_LED 2
 
+#define GUNCON 0
 #define CONTROLLER_DATA_SIZE 8  // From LightGunVerter
-#define DATA_SIZE 8             // From PSX
 
 #include <SPI.h>
 
+#if GUNCON
+#define DATA_SIZE 8             // From PSX
 uint8_t ReadMask[DATA_SIZE]   = { 0xFF, 0xFF, 0, 0, 0, 0, 0, 0 };
 uint8_t ReadExpect[DATA_SIZE] = { 0x01, 0x42, 0, 0, 0, 0, 0, 0 };
 uint8_t Reply[DATA_SIZE] = { 0x63, 0x5A, 0xFF, 0xFF, 0x01, 0x00, 0x05, 0x00 };
+#else
+#define DATA_SIZE 4             // From PSX
+uint8_t ReadMask[DATA_SIZE]   = { 0xFF, 0xFF, 0, 0 };
+uint8_t ReadExpect[DATA_SIZE] = { 0x01, 0x42, 0, 0 };
+uint8_t Reply[DATA_SIZE] = { 0x31, 0x5A, 0xFF, 0xFF };
+#endif
 
 uint8_t ControllerReadIndex = 0;
 uint8_t ControllerData[CONTROLLER_DATA_SIZE];
@@ -102,14 +110,18 @@ void loop()
           if (ControllerData[0] == 0x80 && ControllerData[1] == 0x00) // Player 1 data
           {
             uint16_t Buttons = 0xFFFF;
-            uint16_t GunX = (ControllerData[2] << 7) + ControllerData[3];
-            uint16_t GunY = (ControllerData[4] << 7) + ControllerData[5];
             if (ControllerData[7] & (1<<0)) // Left
               Buttons &= ~(1<<3);
             if (ControllerData[7] & (1<<1)) // Right
               Buttons &= ~(1<<14);
+#if GUNCON
             if (ControllerData[6] & (1<<3)) // B
               Buttons &= ~(1<<13);
+#else
+            if (ControllerData[6] & (1<<3)) // B
+              Buttons &= ~(1<<15);
+            uint16_t GunX = (ControllerData[2] << 7) + ControllerData[3];
+            uint16_t GunY = (ControllerData[4] << 7) + ControllerData[5];
             if (GunX == 0x3FFF && GunY == 0x3FFF)
             {
               GunX = 0x01;
@@ -120,12 +132,15 @@ void loop()
               GunX = 0x4D + (((1023 - GunX) * 3)  >> 3);
               GunY = 0x20 + ((GunY * 11) >> 5);
             }
+#endif
             Reply[2] = Buttons & 0xFF;
             Reply[3] = Buttons >> 8;
+#if GUNCON
             Reply[4] = GunX & 0xFF;
             Reply[5] = GunX >> 8;
             Reply[6] = GunY & 0xFF;
             Reply[7] = GunY >> 8;
+#endif
           }
         }
         ControllerReadIndex = 0;
