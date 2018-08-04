@@ -979,7 +979,7 @@ int IRAM_ATTR SetupLine(uint32_t Bank, const int *StartingLine)
 		{
 			SourcePlayer = LastActivePlayer;
 		}
-		if (CurrentLine == StartingLine[SourcePlayer] + ARRAY_NUM(ReticuleSizeLookup[0])/2)
+		if (CurrentLine == StartingLine[SourcePlayer])
 		{
 			int Channel = RMT_TRIGGER_CHANNEL + Player;
 			int DelayChannel = RMT_DELAY_TRIGGER_CHANNEL + Player;
@@ -994,6 +994,10 @@ int IRAM_ATTR SetupLine(uint32_t Bank, const int *StartingLine)
 			HorizontalPulse.duration0 += CalibrationDelay;
 			RMTMEM.chan[DelayChannel].data32[0].val = HorizontalPulse.val;
 			RMTMEM.chan[DelayChannel].data32[1].val = EndTerminator.val;
+			Active |= (2 << Player);
+		}
+		else if (CurrentLine > StartingLine[SourcePlayer] && CurrentLine < StartingLine[SourcePlayer] + ARRAY_NUM(ReticuleSizeLookup[0]))
+		{
 			Active |= (2 << Player);
 		}
 	}
