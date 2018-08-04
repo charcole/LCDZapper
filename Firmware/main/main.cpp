@@ -298,7 +298,7 @@ public:
 						ReticuleXPosition[PlayerIdx] = TIMING_BACK_PORCH + (LineDuration*(int)Spot.X) / 1024;
 						ReticuleStartLineNum[PlayerIdx] = TIMING_BLANKED_LINES + (VisibleLines*(int)Spot.Y) / 1024;
 						SpotX = (uint16_t)Spot.X;
-						SpotY = (uint16_t)Spot.Y;
+						SpotY = (uint16_t)((Spot.Y * 3) / 4);
 					}
 					else
 					{
@@ -655,10 +655,10 @@ void WiimoteTask(void *pvParameters)
 					ToTransmit[8 * i + 7] = (Buttons & 0x7F);
 				}
 
-				gpio_matrix_out(OUT_PLAYER1_TRIGGER1_PULLED, U1TXD_OUT_IDX, false, false);
-				gpio_matrix_out(OUT_PLAYER1_TRIGGER2_PULLED, U1TXD_OUT_IDX, false, false);
-				gpio_matrix_out(OUT_PLAYER2_TRIGGER1_PULLED, U1TXD_OUT_IDX, false, false);
-				gpio_matrix_out(OUT_PLAYER2_TRIGGER2_PULLED, U1TXD_OUT_IDX, false, false);
+				gpio_matrix_out(OUT_PLAYER1_TRIGGER1_PULLED, U1TXD_OUT_IDX, true, false);
+				gpio_matrix_out(OUT_PLAYER1_TRIGGER2_PULLED, U1TXD_OUT_IDX, true, false);
+				gpio_matrix_out(OUT_PLAYER2_TRIGGER1_PULLED, U1TXD_OUT_IDX, true, false);
+				gpio_matrix_out(OUT_PLAYER2_TRIGGER2_PULLED, U1TXD_OUT_IDX, true, false);
 
 				uart_tx_chars(UART_NUM_1, (char*)ToTransmit, sizeof(ToTransmit));
 			}
@@ -979,7 +979,7 @@ int IRAM_ATTR SetupLine(uint32_t Bank, const int *StartingLine)
 		{
 			SourcePlayer = LastActivePlayer;
 		}
-		if (CurrentLine == StartingLine[SourcePlayer] + ARRAY_NUM(ReticuleSizeLookup[0])/2)
+		if (CurrentLine == StartingLine[SourcePlayer])
 		{
 			int Channel = RMT_TRIGGER_CHANNEL + Player;
 			int DelayChannel = RMT_DELAY_TRIGGER_CHANNEL + Player;
@@ -994,6 +994,10 @@ int IRAM_ATTR SetupLine(uint32_t Bank, const int *StartingLine)
 			HorizontalPulse.duration0 += CalibrationDelay;
 			RMTMEM.chan[DelayChannel].data32[0].val = HorizontalPulse.val;
 			RMTMEM.chan[DelayChannel].data32[1].val = EndTerminator.val;
+			Active |= (2 << Player);
+		}
+		else if (CurrentLine > StartingLine[SourcePlayer] && CurrentLine < StartingLine[SourcePlayer] + ARRAY_NUM(ReticuleSizeLookup[0]))
+		{
 			Active |= (2 << Player);
 		}
 	}
