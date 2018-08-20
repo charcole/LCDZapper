@@ -60,6 +60,7 @@ extern "C"
 #define OUT_WHITE_OVERRIDE (GPIO_NUM_19) // Ignore the white level
 #define OUT_FRONT_PANEL_LED1 (GPIO_NUM_4) // Green LED on RJ45
 #define OUT_FRONT_PANEL_LED2 (GPIO_NUM_32) // Green LED on RJ45
+#define OUT_PLAYER1_SUSTAIN_CAPACITOR (GPIO_NUM_15) // Adds extra hold delay for NES games
 
 #define IN_COMPOSITE_SYNC (GPIO_NUM_21) // Compsite sync input (If changed change also in asm loop)
 #define IN_UPLOAD_BUTTON (GPIO_NUM_0) // Upload button
@@ -1217,6 +1218,11 @@ void InitializeMiscGPIO()
 	GPIOConfig.pin_bit_mask = BIT(OUT_PLAYER2_LED_DELAYED);
 	gpio_config(&GPIOConfig);
 	gpio_set_level(OUT_PLAYER2_LED_DELAYED, 0);
+	
+	GPIOConfig.pin_bit_mask = BIT(OUT_PLAYER1_SUSTAIN_CAPACITOR);
+	GPIOConfig.mode = GPIO_MODE_INPUT;	// Don't add extra sustain
+	gpio_config(&GPIOConfig);
+	gpio_set_level(OUT_PLAYER1_SUSTAIN_CAPACITOR, 0);
 	
 	GPIOConfig.pin_bit_mask = BIT(OUT_WHITE_OVERRIDE);
 	GPIOConfig.mode = GPIO_MODE_INPUT;	// Let white level detect from signal
