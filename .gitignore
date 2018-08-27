@@ -4,4 +4,8 @@ build/
 sdkconfig.old
 *.bak
 *-bak
-
+Gerbers/
+fp-lib-table
+.pretty/
+*.bin
+.vscode/
