@@ -3,7 +3,7 @@
   (general
     (links 12)
     (no_connects 0)
-    (area 99.924999 69.924999 183.075001 99.075001)
+    (area 93.328572 68.925 204.235715 119.944961)
     (thickness 1.6)
     (drawings 30)
     (tracks 30)
@@ -580,7 +580,7 @@
   (gr_text "Manufacturer marks on this side, please" (at 142.25 93) (layer B.SilkS)
     (effects (font (size 1.5 1.5) (thickness 0.3)) (justify mirror))
   )
-  (gr_text "Ver. 4.1" (at 178.75 98) (layer F.SilkS)
+  (gr_text "Ver. 4.4" (at 178.75 98) (layer F.SilkS)
     (effects (font (size 1 1) (thickness 0.25) italic))
   )
   (gr_text GND (at 147.25 73) (layer B.SilkS)
