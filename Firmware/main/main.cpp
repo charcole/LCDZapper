@@ -656,9 +656,9 @@ void WiimoteTask(void *pvParameters)
 					ToTransmit[8 * i + 7] = (Buttons & 0x7F);
 				}
 
-				gpio_matrix_out(OUT_PLAYER1_TRIGGER1_PULLED, U1TXD_OUT_IDX, true, false);
+				gpio_matrix_out(OUT_PLAYER1_TRIGGER1_PULLED, SIG_GPIO_OUT_IDX, true, false);
 				gpio_matrix_out(OUT_PLAYER1_TRIGGER2_PULLED, U1TXD_OUT_IDX, true, false);
-				gpio_matrix_out(OUT_PLAYER2_TRIGGER1_PULLED, U1TXD_OUT_IDX, true, false);
+				gpio_matrix_out(OUT_PLAYER2_TRIGGER1_PULLED, SIG_GPIO_OUT_IDX, true, false);
 				gpio_matrix_out(OUT_PLAYER2_TRIGGER2_PULLED, U1TXD_OUT_IDX, true, false);
 
 				uart_tx_chars(UART_NUM_1, (char*)ToTransmit, sizeof(ToTransmit));
@@ -1064,6 +1064,11 @@ void IRAM_ATTR SpotGeneratorInnerLoop()
 			{
 				bNTSC = (CurrentLine < 275); // PAL should be something like 300 and NTSC 250
 			}
+			
+			if (IOType == 4) // Serial
+			{
+				GPIO.out_w1ts = (1 << OUT_PLAYER1_TRIGGER1_PULLED) | (1 << OUT_PLAYER2_TRIGGER1_PULLED);
+			}
 
 			CurrentLine = 0;
 			CurrentTextLine = 0;
@@ -1077,6 +1082,11 @@ void IRAM_ATTR SpotGeneratorInnerLoop()
 		{
 			CompositeSyncPositiveEdge(Bank, Active);
 			bNeedSetup = true;
+			
+			if (IOType == 4) // Serial
+			{
+				GPIO.out_w1tc = (1 << OUT_PLAYER1_TRIGGER1_PULLED) | (1 << OUT_PLAYER2_TRIGGER1_PULLED);
+			}
 		}
 	}
 }
