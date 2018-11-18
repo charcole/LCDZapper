@@ -83,24 +83,24 @@ extern "C"
 #define HOME_TIME_UNTIL_FIRMWARE_UPDATE 10000
 
 #define TIMING_RETICULE_WIDTH 75.0f // Generates a circle in PAL but might need adjusting for NTSC (In 80ths of a microsecond)
-#define TIMING_BACK_PORCH 8*80		// In 80ths of a microsecond	(Should be about 6*80)
-#define TIMING_LINE_DURATION  8*465 // In 80ths of a microsecond  (Should be about 52*80 but need to clip when off edge)
-#define TIMING_LINE_DURATION_NTSC  8*460 // Not correct. Backporch should be altered instead
-#define TIMING_BLANKED_LINES 24		// Should be about 16?
-#define TIMING_VISIBLE_LINES 250	// Should be 288
-#define TIMING_VISIBLE_LINES_NTSC 202	// Should be 240
+#define TIMING_BACK_PORCH 7*80		// In 80ths of a microsecond	(Should be about 6*80)
+#define TIMING_LINE_DURATION  (8*465+100) // In 80ths of a microsecond  (Should be about 52*80 but need to clip when off edge)
+#define TIMING_LINE_DURATION_NTSC  (8*460+100) // Not correct. Backporch should be altered instead
+#define TIMING_BLANKED_LINES 28		// Should be about 16?
+#define TIMING_VISIBLE_LINES 264	// Should be 288
+#define TIMING_VISIBLE_LINES_NTSC 220	// Should be 240
 #define TIMING_VSYNC_THRESHOLD (40*16) // If sync is longer than this then doing a vertical sync
 #define TIMING_SHORT_SYNC_THRESHOLD (40*3) // If sync is shorter than this it's a short sync
 #define TEXT_START_LINE 105
 #define TEXT_END_LINE (TEXT_START_LINE + 80)
 #define LOGO_START_LINE (TIMING_BLANKED_LINES + 24)
 #define LOGO_END_LINE (LOGO_START_LINE + 200)
-#define MENU_START_MARGIN 100		// In 80th of microsecond
+#define MENU_START_MARGIN 220		// In 80th of microsecond
 #define NUM_TEXT_SUBLINES 20		// Vertical resolution of font
 #define NUM_TEXT_ROWS 10			// Num rows of text
 #define NUM_TEXT_COLUMNS 20			// Num characters across screen
 #define NUM_TEXT_BORDER_LINES 2		// Blank lines between lines of text
-#define MENU_START_LINE (TIMING_BLANKED_LINES + 24)
+#define MENU_START_LINE (TIMING_BLANKED_LINES + 20)
 #define MENU_END_LINE (MENU_START_LINE + NUM_TEXT_ROWS * (NUM_TEXT_SUBLINES + NUM_TEXT_BORDER_LINES))
 #define FONT_WIDTH 160				// In 80th of microsecond
 #define MENU_BORDER 40				// In 80th of microsecond
