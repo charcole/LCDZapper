@@ -147,11 +147,11 @@ struct CableSetting
 
 CableSetting CableSettings[]=
 {
-	{ "       CUSTOM       ", 0, 0, 13, 0 },
+	{ "       CUSTOM       ", 35, 0, 13, 1 },
 	{ "     +UNIVERSAL     ", 0, 0, 13, 0 },
-	{ "       ZAPPER       ", 0, 0, 13, 0 },
-	{ "       PHASER       ", 0, 0, 13, 0 },
-	{ "       VIRTUA       ", 0, 0, 13, 0 },
+	{ "       ZAPPER       ", 35, 0, 13, 3 },
+	{ "       PHASER       ", 35, 0, 0, 1 },
+	{ "       VIRTUA       ", 40, 7, 0, 1 },
 };
 
 EUIState UIState = kUIState_Syncing;
@@ -531,14 +531,14 @@ void SaveMenuState()
 
 void SetDefaultMenuState()
 {
-	CustomIOType = IOType = 0;
 	CursorBrightness = 3;
-	CustomWhiteLevelDecimal = WhiteLevelDecimal = 13;
-	CustomDelayDecimal = DelayDecimal = 0;
 	Coop = 0;
 	CursorSize = 1;
-	CustomLineDelay = LineDelay = 0;
 	CableType = 1;
+	CustomIOType = IOType = CableSettings[0].IOType;
+	CustomWhiteLevelDecimal = WhiteLevelDecimal = CableSettings[0].WhiteLevelDecimal;
+	CustomDelayDecimal = DelayDecimal = CableSettings[0].DelayDecimal;
+	CustomLineDelay = LineDelay = CableSettings[0].LineDelay;
 }
 
 void RestoreMenuState()
@@ -757,6 +757,10 @@ void WiimoteTask(void *pvParameters)
 					LineDelay = CableSettings[CableType].LineDelay;
 					WhiteLevelDecimal = CableSettings[CableType].WhiteLevelDecimal;
 					IOType = CableSettings[CableType].IOType;
+				}
+				if (CableType == 1) // NES
+				{
+					gpio_set_direction(OUT_PLAYER1_SUSTAIN_CAPACITOR, GPIO_MODE_OUTPUT); // Turn on sustain
 				}
 				InitializeMenu();
 			}
@@ -1501,6 +1505,7 @@ bool MenuInput(MenuControl Input, PlayerInput *MenuPlayer)
 			if (SelectedRow >= 5 && SelectedRow <= 8) // Changing delay/white level/IOType/line delay
 			{
 				CableType = 0; // Custom
+				gpio_set_direction(OUT_PLAYER1_SUSTAIN_CAPACITOR, GPIO_MODE_INPUT); // Remove sustain
 			}
 			UpdateMenu();
 		}
