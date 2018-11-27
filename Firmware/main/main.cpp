@@ -960,13 +960,34 @@ int IRAM_ATTR SetupLine(uint32_t Bank, const int *StartingLine)
 			StartingDelay.duration1 = MENU_START_MARGIN;
 			const unsigned char *Message = TextBuffer[CurrentTextLine];
 			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData++].val = StartingDelay.val;
-			for (int Column = 0; Column < NUM_TEXT_COLUMNS; Column++)
+			volatile uint32_t* __restrict__ Destination = &RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData].val;
+			for (int Column = 0; Column < NUM_TEXT_COLUMNS; Column += 4)
 			{
 				int Remapped = Message[Column];
-				const uint32_t *FontData=Font[Remapped][CurrentTextSubLine];
-				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData++].val = FontData[0];
-				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData++].val = FontData[1];
-				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData++].val = FontData[2];
+				const uint32_t * __restrict__ FontData=Font[Remapped][CurrentTextSubLine];
+				*(Destination++) = FontData[0];
+				*(Destination++) = FontData[1];
+				*(Destination++) = FontData[2];
+				
+				Remapped = Message[Column+1];
+				FontData=Font[Remapped][CurrentTextSubLine];
+				*(Destination++) = FontData[0];
+				*(Destination++) = FontData[1];
+				*(Destination++) = FontData[2];
+				
+				Remapped = Message[Column+2];
+				FontData=Font[Remapped][CurrentTextSubLine];
+				*(Destination++) = FontData[0];
+				*(Destination++) = FontData[1];
+				*(Destination++) = FontData[2];
+				
+				Remapped = Message[Column+3];
+				FontData=Font[Remapped][CurrentTextSubLine];
+				*(Destination++) = FontData[0];
+				*(Destination++) = FontData[1];
+				*(Destination++) = FontData[2];
+				
+				CurData+=3*4;
 			}
 			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData++].val = EndTerminator.val;
 			Active = 1;
