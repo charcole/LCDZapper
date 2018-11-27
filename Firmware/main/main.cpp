@@ -147,11 +147,11 @@ struct CableSetting
 
 CableSetting CableSettings[]=
 {
-	{ "       CUSTOM       ", 35, 0, 13, 1 },
+	{ "     +CUSTOM        ", 35, 0, 13, 1 },
 	{ "     +UNIVERSAL     ", 0, 0, 13, 0 },
-	{ "       ZAPPER       ", 35, 0, 13, 3 },
-	{ "       PHASER       ", 35, 0, 0, 1 },
-	{ "       VIRTUA       ", 40, 7, 0, 1 },
+	{ "     +NES           ", 35, 0, 13, 3 },
+	{ "     +SMS           ", 35, 0, 0, 1 },
+	{ "     +SATURN        ", 40, 7, 0, 1 },
 };
 
 EUIState UIState = kUIState_Syncing;
@@ -186,6 +186,7 @@ static int CustomDelayDecimal = 0;
 static int CustomLineDelay = 0;
 static int CustomWhiteLevelDecimal = 13;
 static int CustomIOType = 0;
+static int LoadedCableType = 1;
 
 bool MenuInput(MenuControl Input, class PlayerInput *MenuPlayer);
 void InitializeFirmwareUpdateScreen();
@@ -534,7 +535,7 @@ void SetDefaultMenuState()
 	CursorBrightness = 3;
 	Coop = 0;
 	CursorSize = 1;
-	CableType = 1;
+	LoadedCableType = CableType = 1;
 	CustomIOType = IOType = CableSettings[0].IOType;
 	CustomWhiteLevelDecimal = WhiteLevelDecimal = CableSettings[0].WhiteLevelDecimal;
 	CustomDelayDecimal = DelayDecimal = CableSettings[0].DelayDecimal;
@@ -556,7 +557,7 @@ void RestoreMenuState()
 			Coop = (State & 1); State >>= 1;
 			CursorSize = (State & 3); State >>= 2;
 			CustomLineDelay = LineDelay = (State & 15); State >>= 4;
-			CableType = (State & 15); State >>= 4;
+			LoadedCableType = CableType = (State & 15); State >>= 4;
 
 			if (State != SAVESTATE_VERSION || IOType > 4 || CursorBrightness > 3 || WhiteLevelDecimal > 33 || DelayDecimal > 99 || CursorSize > 3 || CableType >= ARRAY_NUM(CableSettings))
 			{
@@ -761,6 +762,10 @@ void WiimoteTask(void *pvParameters)
 				if (CableType == 1) // NES
 				{
 					gpio_set_direction(OUT_PLAYER1_SUSTAIN_CAPACITOR, GPIO_MODE_OUTPUT); // Turn on sustain
+				}
+				if (CableType != LoadedCableType)
+				{
+					SaveMenuState();
 				}
 				InitializeMenu();
 			}
