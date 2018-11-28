@@ -147,18 +147,18 @@ struct CableSetting
 
 CableSetting CableSettings[]=
 {
-	{ "     +CUSTOM        ", 35, 0, 13, 1 },
-	{ "     +UNIVERSAL     ", 0, 0, 13, 0 },
-	{ "     +NES           ", 35, 0, 13, 3 },
+	{ "     +CUSTOM        ", 35, 0, 11, 1 },
+	{ "     +UNIVERSAL     ", 0, 0, 11, 0 },
+	{ "     +NES           ", 35, 0, 11, 3 },
 	{ "     +SMS           ", 35, 0, 0, 1 },
 	{ "     +SATURN        ", 40, 7, 0, 1 },
 };
 
 EUIState UIState = kUIState_Syncing;
-static int CursorSize = 3;
+static int CursorSize = 2;
 static int DelayDecimal = 0;
 static int LineDelay = 0;
-static int WhiteLevelDecimal = 13;
+static int WhiteLevelDecimal = 11;
 static int IOType = 0;
 static int CursorBrightness = 3;
 static int SelectedRow = 2;
@@ -184,7 +184,7 @@ static bool bNTSC = true;
 
 static int CustomDelayDecimal = 0;
 static int CustomLineDelay = 0;
-static int CustomWhiteLevelDecimal = 13;
+static int CustomWhiteLevelDecimal = 11;
 static int CustomIOType = 0;
 static int LoadedCableType = 1;
 
@@ -534,7 +534,7 @@ void SetDefaultMenuState()
 {
 	CursorBrightness = 3;
 	Coop = 0;
-	CursorSize = 1;
+	CursorSize = 2;
 	LoadedCableType = CableType = 1;
 	CustomIOType = IOType = CableSettings[0].IOType;
 	CustomWhiteLevelDecimal = WhiteLevelDecimal = CableSettings[0].WhiteLevelDecimal;
