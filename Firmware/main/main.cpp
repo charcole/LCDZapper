@@ -1539,6 +1539,7 @@ bool MenuInput(MenuControl Input, PlayerInput *MenuPlayer)
 	if (Input != kMenu_None)
 	{
 		bool bDirty = AdjustRange(Input, kMenu_Up, kMenu_Down, SelectedRow, 2, 9);
+		bool bMovementDirty = bDirty;
 		switch (SelectedRow)
 		{
 			case 2: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, CursorSize, 0, 3); break;
@@ -1558,7 +1559,7 @@ bool MenuInput(MenuControl Input, PlayerInput *MenuPlayer)
 		}
 		if (bDirty)
 		{
-			if (SelectedRow >= 5 && SelectedRow <= 8) // Changing delay/white level/IOType/line delay
+			if (SelectedRow >= 5 && SelectedRow <= 8 && !bMovementDirty) // Changing delay/white level/IOType/line delay
 			{
 				CableType = 0; // Custom
 				gpio_set_direction(OUT_PLAYER1_SUSTAIN_CAPACITOR, GPIO_MODE_INPUT); // Remove sustain
