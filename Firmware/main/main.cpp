@@ -80,7 +80,7 @@ extern "C"
 #define LEDC_WHITE_LEVEL_CHANNEL    LEDC_CHANNEL_0
 #define WHITE_LEVEL_STEP			248				  // About 0.1V steps
 
-#define HOME_TIME_UNTIL_FIRMWARE_UPDATE 10000
+#define HOME_TIME_UNTIL_FIRMWARE_UPDATE 8000
 
 #define TIMING_RETICULE_WIDTH 75.0f // Generates a circle in PAL but might need adjusting for NTSC (In 80ths of a microsecond)
 #define TIMING_BACK_PORCH 7*80		// In 80ths of a microsecond	(Should be about 6*80)
@@ -148,10 +148,10 @@ struct CableSetting
 CableSetting CableSettings[]=
 {
 	{ "     +CUSTOM        ", 35, 0, 11, 1 },
-	{ "     +UNIVERSAL     ", 0, 0, 11, 0 },
+	{ "     +UNIVERSAL     ", 20, 0, 11, 0 },
 	{ "     +NES           ", 35, 0, 11, 3 },
 	{ "     +SMS           ", 35, 0, 0, 1 },
-	{ "     +SATURN        ", 40, 7, 0, 1 },
+	{ "     +SATURN        ", 51, 0, 0, 0 },
 };
 
 EUIState UIState = kUIState_Syncing;
@@ -193,6 +193,7 @@ void InitializeFirmwareUpdateScreen();
 void InitializeMenu();
 void SetMenuState();
 void ConvertText(const char *Text, int Row, int Column);
+void SetReticuleSize(bool IsCalibration = false);
 
 void SetPersistantStorage(uint64_t PersistantValue)
 {
@@ -281,6 +282,7 @@ public:
 						if (DoneCalibration)
 						{
 							UIState = kUIState_Playing;
+							SetReticuleSize();
 						}
 					}
 				}
@@ -419,6 +421,7 @@ public:
 		CalibrationPhase = 4;
 		DoneCalibration = false;
 		UIState = kUIState_Playing;
+		SetReticuleSize();
 	}
 		
 	void StartCalibration()
@@ -426,6 +429,7 @@ public:
 		CalibrationPhase = 0;
 		DoneCalibration = false;
 		UIState = kUIState_CalibrationMode;
+		SetReticuleSize(true);
 	}
 
 	bool IsConnected()
@@ -759,7 +763,7 @@ void WiimoteTask(void *pvParameters)
 					WhiteLevelDecimal = CableSettings[CableType].WhiteLevelDecimal;
 					IOType = CableSettings[CableType].IOType;
 				}
-				if (CableType == 1) // NES
+				if (CableType == 2) // NES
 				{
 					gpio_set_direction(OUT_PLAYER1_SUSTAIN_CAPACITOR, GPIO_MODE_OUTPUT); // Turn on sustain
 				}
@@ -1211,15 +1215,18 @@ void IRAM_ATTR SpotGeneratorInnerLoop()
 	}
 }
 
-void SetReticuleSize()
+void SetReticuleSize(bool IsCalibration)
 {
 	float Scale = 1.0f;
-	switch (CursorSize)
+	if (!IsCalibration)
 	{
-		case 0: Scale = 1.00f; break; // Off (Will be shown during calibration)
-		case 1: Scale = 0.25f; break; // Small
-		case 2: Scale = 0.50f; break; // Medium
-		case 3: Scale = 1.00f; break; // Large
+		switch (CursorSize)
+		{
+			case 0: Scale = 1.00f; break; // Off (Will be shown during calibration)
+			case 1: Scale = 0.25f; break; // Small
+			case 2: Scale = 0.50f; break; // Medium
+			case 3: Scale = 1.00f; break; // Large
+		}
 	}
 	int ReticuleNumLines = ARRAY_NUM(ReticuleSizeLookup[0]);
 	float ReticuleHalfSize = Scale * ReticuleNumLines / 2.0f;
@@ -1523,7 +1530,7 @@ bool MenuInput(MenuControl Input, PlayerInput *MenuPlayer)
 		{
 			switch (SelectedRow)
 			{
-				case 9: bDirty |= true; MenuPlayer->StartCalibration(); break;
+				case 9: MenuPlayer->StartCalibration(); break;
 			}
 		}
 		if (bDirty)
