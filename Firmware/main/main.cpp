@@ -88,9 +88,11 @@ extern "C"
 #define TIMING_LINE_DURATION_NTSC  (8*460+100) // Not correct. Backporch should be altered instead
 #define TIMING_BLANKED_LINES 28		// Should be about 16?
 #define TIMING_VISIBLE_LINES 264	// Should be 288
-#define TIMING_VISIBLE_LINES_NTSC 220	// Should be 240
-#define TIMING_VSYNC_THRESHOLD (40*16) // If sync is longer than this then doing a vertical sync
-#define TIMING_SHORT_SYNC_THRESHOLD (40*3) // If sync is shorter than this it's a short sync
+#define TIMING_VISIBLE_LINES_NTSC 200	// Should be 240
+#define TIMING_VSYNC_THRESHOLD (80*16) // If sync is longer than this then doing a vertical sync
+#define TIMING_SHORT_SYNC_THRESHOLD (80*2 + 40) // If sync is shorter than this it's a short sync
+#define TIMING_SHORT_SYNC_LOWER_THRESHOLD (80*1 + 40) // If sync is longer than this it's a short sync
+#define TIMING_SYNC_DEBOUNCE (2*80)  // At the end of the sync check to see if it's real (noisy signals can cause errors)
 #define TEXT_START_LINE 105
 #define TEXT_END_LINE (TEXT_START_LINE + 80)
 #define LOGO_START_LINE (TIMING_BLANKED_LINES + 24)
@@ -1186,6 +1188,16 @@ void IRAM_ATTR SpotGeneratorInnerLoop()
 		TIMERG1.hw_timer[timer_idx].update = 1;
 		// Don't really need the 64-bit time but only reading cnt_low seems to caused it to sometimes not update. Adding some nops also worked but not as reliably as this
 		uint64_t Time = 2*(((uint64_t)TIMERG1.hw_timer[timer_idx].cnt_high<<32) | TIMERG1.hw_timer[timer_idx].cnt_low); // Timer's clk is half APB hence 2x.
+		uint64_t CheckTime = 0;
+		while (Time < TIMING_VSYNC_THRESHOLD && CheckTime < Time + TIMING_SYNC_DEBOUNCE) // Try to debounce in case the sync signal is noisy
+		{
+			TIMERG1.hw_timer[timer_idx].update = 1;
+			CheckTime = 2 * (((uint64_t)TIMERG1.hw_timer[timer_idx].cnt_high << 32) | TIMERG1.hw_timer[timer_idx].cnt_low); // Timer's clk is half APB hence 2x.
+			if ((GPIO.in & BIT(IN_COMPOSITE_SYNC)) != 0)
+			{
+				Time = CheckTime;
+			}
+		}
 		if (bNeedSetup)
 		{
 			Active = SetupLine(Bank, CachedStartingLines);
@@ -1193,7 +1205,7 @@ void IRAM_ATTR SpotGeneratorInnerLoop()
 		}
 		while ((GPIO.in & BIT(IN_COMPOSITE_SYNC)) == 0); // while not sync
 		TIMERG1.hw_timer[timer_idx].reload = 1;
-		if (Time > TIMING_VSYNC_THRESHOLD || Time < TIMING_SHORT_SYNC_THRESHOLD)
+		if ((Time > TIMING_VSYNC_THRESHOLD))// || (Time > TIMING_SHORT_SYNC_LOWER_THRESHOLD && Time < TIMING_SHORT_SYNC_THRESHOLD)) // Short syncs cause issues with noisy sync signals
 		{
 			if (CurrentLine > 200 && CurrentLine < 400)
 			{
