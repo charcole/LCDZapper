@@ -87,8 +87,8 @@ extern "C"
 #define TIMING_LINE_DURATION  (8*465+100) // In 80ths of a microsecond  (Should be about 52*80 but need to clip when off edge)
 #define TIMING_LINE_DURATION_NTSC  (8*460+100) // Not correct. Backporch should be altered instead
 #define TIMING_BLANKED_LINES 28		// Should be about 16?
-#define TIMING_VISIBLE_LINES 264	// Should be 288
-#define TIMING_VISIBLE_LINES_NTSC 200	// Should be 240
+#define TIMING_VISIBLE_LINES 258	// Should be 288
+#define TIMING_VISIBLE_LINES_NTSC 206	// Should be 240
 #define TIMING_VSYNC_THRESHOLD (80*16) // If sync is longer than this then doing a vertical sync
 #define TIMING_SHORT_SYNC_THRESHOLD (80*2 + 40) // If sync is shorter than this it's a short sync
 #define TIMING_SHORT_SYNC_LOWER_THRESHOLD (80*1 + 40) // If sync is longer than this it's a short sync
@@ -153,7 +153,7 @@ CableSetting CableSettings[]=
 {
 	{ "     +CUSTOM        ", 35, 0, 11, 1 },
 	{ "     +UNIVERSAL     ", 20, 0, 11, 0 },
-	{ "     +NES           ", 35, 0, 11, 3 },
+	{ "     +NES           ", 35, 0, 13, 3 },
 	{ "     +SMS           ", 35, 0, 0, 1 },
 	{ "     +SATURN        ", 51, 0, 0, 0 },
 };
