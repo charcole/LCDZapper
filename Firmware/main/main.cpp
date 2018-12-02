@@ -106,6 +106,8 @@ extern "C"
 #define MENU_BORDER 40				// In 80th of microsecond
 #define NTSC_LINE_OFFSET 24			// Remove border lines to recentre (affects Menu/"Text"/Logo etc)
 
+#define ENABLE_MENU_BORDER	0 		// Disable until issues with glitching (especially bad on NTSC is solved)
+
 #define SAVESTATE_VERSION 2
 
 #define PERSISTANT_POWER_ON_VALUE		0xCDC00000ull
@@ -1001,10 +1003,12 @@ int IRAM_ATTR SetupLine(uint32_t Bank, const int *StartingLine)
 			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData++].val = EndTerminator.val;
 			Active = 1;
 		}
+#if ENABLE_MENU_BORDER
 		if (UIState != kUIState_ChoosingCable || (CurrentTextLine >= 2 && CurrentTextLine <= 8))
 		{
 			Active |= 8; // Background menu
 		}
+#endif
 		CurrentTextSubLine++;
 		if (CurrentTextSubLine >= NUM_TEXT_SUBLINES + NUM_TEXT_BORDER_LINES)
 		{
@@ -1142,8 +1146,15 @@ void IRAM_ATTR DoOutputSelection(uint32_t Bank, bool bInMenu)
 	}
 	else
 	{
-		uint32_t HighChannel = (CursorBrightness&2) ? (RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL + Bank) : SIG_GPIO_OUT_IDX;
-		uint32_t LowChannel = (CursorBrightness&1) ? (RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL + Bank) : SIG_GPIO_OUT_IDX;
+		int LocalBrightness = CursorBrightness;
+#if !ENABLE_MENU_BORDER
+		if (UIState != kUIState_Playing)
+		{
+			LocalBrightness = (CurrentLine & 1) ? 2 : 3;
+		}
+#endif
+		uint32_t HighChannel = (LocalBrightness&2) ? (RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL + Bank) : SIG_GPIO_OUT_IDX;
+		uint32_t LowChannel = (LocalBrightness&1) ? (RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL + Bank) : SIG_GPIO_OUT_IDX;
 		WRITE_PERI_REG(OUT_SCREEN_DIM_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (HighChannel << GPIO_FUNC0_OUT_SEL_S));
 		WRITE_PERI_REG(OUT_SCREEN_DIMER_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (LowChannel << GPIO_FUNC0_OUT_SEL_S));
 		WRITE_PERI_REG(OUT_SCREEN_DIM_INV_SELECTION_REG, (RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL + Bank) << GPIO_FUNC0_OUT_SEL_S);
