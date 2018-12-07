@@ -60,6 +60,7 @@ extern "C"
 #define OUT_WHITE_OVERRIDE (GPIO_NUM_19) // Ignore the white level
 #define OUT_FRONT_PANEL_LED1 (GPIO_NUM_4) // Green LED on RJ45
 #define OUT_FRONT_PANEL_LED2 (GPIO_NUM_32) // Green LED on RJ45
+#define OUT_PLAYER1_SUSTAIN_CAPACITOR (GPIO_NUM_15) // Adds extra hold delay for NES games
 
 #define IN_COMPOSITE_SYNC (GPIO_NUM_21) // Compsite sync input (If changed change also in asm loop)
 #define IN_UPLOAD_BUTTON (GPIO_NUM_0) // Upload button
@@ -79,33 +80,36 @@ extern "C"
 #define LEDC_WHITE_LEVEL_CHANNEL    LEDC_CHANNEL_0
 #define WHITE_LEVEL_STEP			248				  // About 0.1V steps
 
-#define HOME_TIME_UNTIL_FIRMWARE_UPDATE 10000
+#define HOME_TIME_UNTIL_FIRMWARE_UPDATE 8000
 
 #define TIMING_RETICULE_WIDTH 75.0f // Generates a circle in PAL but might need adjusting for NTSC (In 80ths of a microsecond)
-#define TIMING_BACK_PORCH 8*80		// In 80ths of a microsecond	(Should be about 6*80)
-#define TIMING_LINE_DURATION  8*465 // In 80ths of a microsecond  (Should be about 52*80 but need to clip when off edge)
-#define TIMING_LINE_DURATION_NTSC  8*460 // Not correct. Backporch should be altered instead
-#define TIMING_BLANKED_LINES 24		// Should be about 16?
-#define TIMING_VISIBLE_LINES 250	// Should be 288
-#define TIMING_VISIBLE_LINES_NTSC 202	// Should be 240
+#define TIMING_BACK_PORCH 7*80		// In 80ths of a microsecond	(Should be about 6*80)
+#define TIMING_LINE_DURATION  (8*465+100) // In 80ths of a microsecond  (Should be about 52*80 but need to clip when off edge)
+#define TIMING_LINE_DURATION_NTSC  (8*460+100) // Not correct. Backporch should be altered instead
+#define TIMING_BLANKED_LINES 28		// Should be about 16?
+#define TIMING_VISIBLE_LINES 258	// Should be 288
+#define TIMING_VISIBLE_LINES_NTSC 206	// Should be 240
 #define TIMING_VSYNC_THRESHOLD (40*16) // If sync is longer than this then doing a vertical sync
 #define TIMING_SHORT_SYNC_THRESHOLD (40*3) // If sync is shorter than this it's a short sync
+#define TIMING_SYNC_DEBOUNCE (2*80)  // At the end of the sync check to see if it's real (noisy signals can cause errors)
 #define TEXT_START_LINE 105
 #define TEXT_END_LINE (TEXT_START_LINE + 80)
 #define LOGO_START_LINE (TIMING_BLANKED_LINES + 24)
 #define LOGO_END_LINE (LOGO_START_LINE + 200)
-#define MENU_START_MARGIN 100		// In 80th of microsecond
+#define MENU_START_MARGIN 220		// In 80th of microsecond
 #define NUM_TEXT_SUBLINES 20		// Vertical resolution of font
 #define NUM_TEXT_ROWS 10			// Num rows of text
 #define NUM_TEXT_COLUMNS 20			// Num characters across screen
 #define NUM_TEXT_BORDER_LINES 2		// Blank lines between lines of text
-#define MENU_START_LINE (TIMING_BLANKED_LINES + 24)
+#define MENU_START_LINE (TIMING_BLANKED_LINES + 20)
 #define MENU_END_LINE (MENU_START_LINE + NUM_TEXT_ROWS * (NUM_TEXT_SUBLINES + NUM_TEXT_BORDER_LINES))
 #define FONT_WIDTH 160				// In 80th of microsecond
 #define MENU_BORDER 40				// In 80th of microsecond
 #define NTSC_LINE_OFFSET 24			// Remove border lines to recentre (affects Menu/"Text"/Logo etc)
 
-#define SAVESTATE_VERSION 1
+#define ENABLE_MENU_BORDER	0 		// Disable until issues with glitching (especially bad on NTSC is solved)
+
+#define SAVESTATE_VERSION 2
 
 #define PERSISTANT_POWER_ON_VALUE		0xCDC00000ull
 #define PERSISTANT_FIRMWARE_UPDATE_MODE	0xCDC10000ull
@@ -120,7 +124,9 @@ enum EUIState
 	kUIState_Playing,
 	kUIState_InMenu,
 	kUIState_CalibrationMode,
-	kUIState_FirmwareUpdate
+	kUIState_FirmwareUpdate,
+	kUIState_ChoosingCable,
+	kUIState_Syncing
 };
 
 enum MenuControl
@@ -133,10 +139,29 @@ enum MenuControl
 	kMenu_Select
 };
 
-EUIState UIState = kUIState_Playing;
-static int CursorSize = 3;
+struct CableSetting
+{
+	const char *Name;
+	int DelayDecimal;
+	int LineDelay;
+	int WhiteLevelDecimal;
+	int IOType;
+};
+
+CableSetting CableSettings[]=
+{
+	{ "     +CUSTOM        ", 35, 0, 11, 1 },
+	{ "     +UNIVERSAL     ", 20, 0, 11, 0 },
+	{ "     +NES           ", 35, 0, 13, 3 },
+	{ "     +SMS           ", 35, 0, 0, 1 },
+	{ "     +SATURN        ", 51, 0, 0, 0 },
+};
+
+EUIState UIState = kUIState_Syncing;
+static int CursorSize = 2;
 static int DelayDecimal = 0;
-static int WhiteLevelDecimal = 13;
+static int LineDelay = 0;
+static int WhiteLevelDecimal = 11;
 static int IOType = 0;
 static int CursorBrightness = 3;
 static int SelectedRow = 2;
@@ -156,12 +181,22 @@ static int ReticuleSizeLookup[2][14];
 static int CalibrationDelay = 0;
 static int LastActivePlayer = 0;
 static int WhiteLevel = 3225;	// Should produce test voltage of 1.3V (good for composite video)
+static int CableType = 1;
 static unsigned char TextBuffer[NUM_TEXT_ROWS][NUM_TEXT_COLUMNS];
 static bool bNTSC = true;
 
+static int CustomDelayDecimal = 0;
+static int CustomLineDelay = 0;
+static int CustomWhiteLevelDecimal = 11;
+static int CustomIOType = 0;
+static int LoadedCableType = 1;
+
 bool MenuInput(MenuControl Input, class PlayerInput *MenuPlayer);
 void InitializeFirmwareUpdateScreen();
+void InitializeMenu();
 void SetMenuState();
+void ConvertText(const char *Text, int Row, int Column);
+void SetReticuleSize(bool IsCalibration = false);
 
 void SetPersistantStorage(uint64_t PersistantValue)
 {
@@ -222,6 +257,7 @@ public:
 		Wiimote = GWiimoteManager.CreateNewWiimote();
 		FrameNumber = 0;
 		OldButtons = 0;
+		ButtonClick = 0;
 		PlayerIdx = PlayerNum;
 		CalibrationPhase = 4;
 		DoneCalibration = false;
@@ -249,6 +285,7 @@ public:
 						if (DoneCalibration)
 						{
 							UIState = kUIState_Playing;
+							SetReticuleSize();
 						}
 					}
 				}
@@ -332,9 +369,10 @@ public:
 
 			if (TextMode)
 			{
-				if (ImageData == &ImagePress12[0][0])
+				if (UIState == kUIState_Syncing)
 				{
 					TextMode = false;	// Turn off sync message once connected
+					UIState = kUIState_ChoosingCable;
 				}
 				else if (UIState != kUIState_CalibrationMode)
 				{
@@ -342,13 +380,23 @@ public:
 				}
 			}
 
+			ButtonClick = Data->Buttons & ~OldButtons;
 			OldButtons = Data->Buttons;
+		}
+		else
+		{
+			ButtonClick = 0;
 		}
 	}
 
 	bool ButtonClicked(int ButtonFlags, int ButtonSelect)
 	{
 		return ((ButtonFlags & ButtonSelect) && !(OldButtons & ButtonSelect));
+	}
+	
+	bool ButtonWasClicked(int ButtonSelect)
+	{
+		return (ButtonSelect & ButtonClick);
 	}
 
 	bool ButtonWasPressed(int ButtonSelect)
@@ -376,6 +424,7 @@ public:
 		CalibrationPhase = 4;
 		DoneCalibration = false;
 		UIState = kUIState_Playing;
+		SetReticuleSize();
 	}
 		
 	void StartCalibration()
@@ -383,6 +432,7 @@ public:
 		CalibrationPhase = 0;
 		DoneCalibration = false;
 		UIState = kUIState_CalibrationMode;
+		SetReticuleSize(true);
 	}
 
 	bool IsConnected()
@@ -445,6 +495,7 @@ private:
 	IWiimote *Wiimote;
 	int FrameNumber;
 	int OldButtons;
+	int ButtonClick;
 	int PlayerIdx;
 	int CalibrationPhase;
 	Vector2D CalibrationData[4];
@@ -457,12 +508,14 @@ void SaveMenuState()
 {
 	int32_t CurrentState = 0;
 	CurrentState = SAVESTATE_VERSION;
+	CurrentState = (CurrentState << 4) | CableType;
+	CurrentState = (CurrentState << 4) | ((CableType == 0) ? LineDelay : CustomLineDelay);
 	CurrentState = (CurrentState << 2) | CursorSize;
 	CurrentState = (CurrentState << 1) | Coop;
-	CurrentState = (CurrentState << 7) | DelayDecimal;
-	CurrentState = (CurrentState << 6) | WhiteLevelDecimal;
+	CurrentState = (CurrentState << 7) | ((CableType == 0) ? DelayDecimal : CustomDelayDecimal);
+	CurrentState = (CurrentState << 6) | ((CableType == 0) ? WhiteLevelDecimal : CustomWhiteLevelDecimal);
 	CurrentState = (CurrentState << 2) | CursorBrightness;
-	CurrentState = (CurrentState << 3) | IOType;
+	CurrentState = (CurrentState << 3) | ((CableType == 0) ? IOType : CustomIOType);
 
 	nvs_handle NVSHandle;
 	if (nvs_open("lightgunverter", NVS_READWRITE, &NVSHandle) == ESP_OK)
@@ -486,12 +539,14 @@ void SaveMenuState()
 
 void SetDefaultMenuState()
 {
-	IOType = 0;
 	CursorBrightness = 3;
-	WhiteLevelDecimal = 13;
-	DelayDecimal = 0;
 	Coop = 0;
-	CursorSize = 1;
+	CursorSize = 2;
+	LoadedCableType = CableType = 1;
+	CustomIOType = IOType = CableSettings[0].IOType;
+	CustomWhiteLevelDecimal = WhiteLevelDecimal = CableSettings[0].WhiteLevelDecimal;
+	CustomDelayDecimal = DelayDecimal = CableSettings[0].DelayDecimal;
+	CustomLineDelay = LineDelay = CableSettings[0].LineDelay;
 }
 
 void RestoreMenuState()
@@ -502,14 +557,16 @@ void RestoreMenuState()
 		int32_t State = 0;
 		if (nvs_get_i32(NVSHandle, "menu_config", &State) == ESP_OK)
 		{
-			IOType = (State & 7); State >>= 3;
+			CustomIOType = IOType = (State & 7); State >>= 3;
 			CursorBrightness = (State & 3); State >>= 2;
-			WhiteLevelDecimal = (State & 63); State >>= 6;
-			DelayDecimal = (State & 127); State >>= 7;
+			CustomWhiteLevelDecimal = WhiteLevelDecimal = (State & 63); State >>= 6;
+			CustomDelayDecimal = DelayDecimal = (State & 127); State >>= 7;
 			Coop = (State & 1); State >>= 1;
 			CursorSize = (State & 3); State >>= 2;
+			CustomLineDelay = LineDelay = (State & 15); State >>= 4;
+			LoadedCableType = CableType = (State & 15); State >>= 4;
 
-			if (State != SAVESTATE_VERSION || IOType > 4 || CursorBrightness > 3 || WhiteLevelDecimal > 33 || DelayDecimal > 99 || CursorSize > 3)
+			if (State != SAVESTATE_VERSION || IOType > 4 || CursorBrightness > 3 || WhiteLevelDecimal > 33 || DelayDecimal > 99 || CursorSize > 3 || CableType >= ARRAY_NUM(CableSettings))
 			{
 				printf("Menu state seems corrupt: Version=%d Data=%d/%d/%d/%d/%d/%d\n", State, IOType, CursorBrightness, WhiteLevelDecimal, DelayDecimal, CursorSize, Coop);
 				SetDefaultMenuState();
@@ -655,9 +712,9 @@ void WiimoteTask(void *pvParameters)
 					ToTransmit[8 * i + 7] = (Buttons & 0x7F);
 				}
 
-				gpio_matrix_out(OUT_PLAYER1_TRIGGER1_PULLED, U1TXD_OUT_IDX, true, false);
+				gpio_matrix_out(OUT_PLAYER1_TRIGGER1_PULLED, SIG_GPIO_OUT_IDX, true, false);
 				gpio_matrix_out(OUT_PLAYER1_TRIGGER2_PULLED, U1TXD_OUT_IDX, true, false);
-				gpio_matrix_out(OUT_PLAYER2_TRIGGER1_PULLED, U1TXD_OUT_IDX, true, false);
+				gpio_matrix_out(OUT_PLAYER2_TRIGGER1_PULLED, SIG_GPIO_OUT_IDX, true, false);
 				gpio_matrix_out(OUT_PLAYER2_TRIGGER2_PULLED, U1TXD_OUT_IDX, true, false);
 
 				uart_tx_chars(UART_NUM_1, (char*)ToTransmit, sizeof(ToTransmit));
@@ -689,12 +746,54 @@ void WiimoteTask(void *pvParameters)
 				InitializeFirmwareUpdateScreen();
 			}
 		}
+		
 		if ((UIState == kUIState_FirmwareUpdate && (Player1.ButtonWasPressed(WiimoteData::kButton_A) || Player2.ButtonWasPressed(WiimoteData::kButton_A))) || !gpio_get_level(IN_UPLOAD_BUTTON))
 		{
 			printf("Restarting\n");
 			GWiimoteManager.DeInit();
 			SetPersistantStorage(PERSISTANT_FIRMWARE_UPDATE_MODE);
 			esp_restart();
+		}
+		else if (UIState == kUIState_ChoosingCable)
+		{
+			if (Player1.ButtonWasClicked(WiimoteData::kButton_A) || Player2.ButtonWasClicked(WiimoteData::kButton_A))
+			{
+				UIState = kUIState_Playing;
+				if (CableType != 0) // Custom
+				{
+					DelayDecimal = CableSettings[CableType].DelayDecimal;
+					LineDelay = CableSettings[CableType].LineDelay;
+					WhiteLevelDecimal = CableSettings[CableType].WhiteLevelDecimal;
+					IOType = CableSettings[CableType].IOType;
+				}
+				if (CableType == 2) // NES
+				{
+					gpio_set_direction(OUT_PLAYER1_SUSTAIN_CAPACITOR, GPIO_MODE_OUTPUT); // Turn on sustain
+				}
+				if (CableType != LoadedCableType)
+				{
+					SaveMenuState();
+				}
+				InitializeMenu();
+			}
+			else if (Player1.ButtonWasClicked(WiimoteData::kButton_Right) || Player1.ButtonWasClicked(WiimoteData::kButton_Down) || Player2.ButtonWasClicked(WiimoteData::kButton_Right) || Player2.ButtonWasClicked(WiimoteData::kButton_Down))
+			{
+				CableType++;
+				if (CableType >= ARRAY_NUM(CableSettings))
+				{
+					CableType = 0;
+				}
+				ConvertText(CableSettings[CableType].Name, 4, 0);
+			}
+			else if (Player1.ButtonWasClicked(WiimoteData::kButton_Left) || Player1.ButtonWasClicked(WiimoteData::kButton_Up) || Player2.ButtonWasClicked(WiimoteData::kButton_Left) || Player2.ButtonWasClicked( WiimoteData::kButton_Up))
+			{
+				CableType--;
+				if (CableType < 0)
+				{
+					CableType = ARRAY_NUM(CableSettings) - 1;
+				}
+				ConvertText(CableSettings[CableType].Name, 4, 0);
+			}
 		}
 
 		vTaskDelay(1);
@@ -861,7 +960,7 @@ int IRAM_ATTR SetupLine(uint32_t Bank, const int *StartingLine)
 	EndTerminator.level1 = 1;
 	EndTerminator.duration1 = 0;
 	
-	if ((UIState == kUIState_InMenu || UIState == kUIState_FirmwareUpdate) && NormalizedCurrentLine >= MENU_START_LINE && NormalizedCurrentLine < MENU_END_LINE)
+	if ((UIState == kUIState_InMenu || UIState == kUIState_FirmwareUpdate || UIState == kUIState_ChoosingCable) && NormalizedCurrentLine >= MENU_START_LINE && NormalizedCurrentLine < MENU_END_LINE)
 	{
 		if (CurrentTextSubLine < NUM_TEXT_SUBLINES)
 		{
@@ -873,18 +972,44 @@ int IRAM_ATTR SetupLine(uint32_t Bank, const int *StartingLine)
 			StartingDelay.duration1 = MENU_START_MARGIN;
 			const unsigned char *Message = TextBuffer[CurrentTextLine];
 			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData++].val = StartingDelay.val;
-			for (int Column = 0; Column < NUM_TEXT_COLUMNS; Column++)
+			volatile uint32_t* __restrict__ Destination = &RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData].val;
+			for (int Column = 0; Column < NUM_TEXT_COLUMNS; Column += 4)
 			{
 				int Remapped = Message[Column];
-				const uint32_t *FontData=Font[Remapped][CurrentTextSubLine];
-				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData++].val = FontData[0];
-				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData++].val = FontData[1];
-				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData++].val = FontData[2];
+				const uint32_t * __restrict__ FontData=Font[Remapped][CurrentTextSubLine];
+				*(Destination++) = FontData[0];
+				*(Destination++) = FontData[1];
+				*(Destination++) = FontData[2];
+				
+				Remapped = Message[Column+1];
+				FontData=Font[Remapped][CurrentTextSubLine];
+				*(Destination++) = FontData[0];
+				*(Destination++) = FontData[1];
+				*(Destination++) = FontData[2];
+				
+				Remapped = Message[Column+2];
+				FontData=Font[Remapped][CurrentTextSubLine];
+				*(Destination++) = FontData[0];
+				*(Destination++) = FontData[1];
+				*(Destination++) = FontData[2];
+				
+				Remapped = Message[Column+3];
+				FontData=Font[Remapped][CurrentTextSubLine];
+				*(Destination++) = FontData[0];
+				*(Destination++) = FontData[1];
+				*(Destination++) = FontData[2];
+				
+				CurData+=3*4;
 			}
 			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[CurData++].val = EndTerminator.val;
 			Active = 1;
 		}
-		Active |= 8; // Background menu
+#if ENABLE_MENU_BORDER
+		if (UIState != kUIState_ChoosingCable || (CurrentTextLine >= 2 && CurrentTextLine <= 8))
+		{
+			Active |= 8; // Background menu
+		}
+#endif
 		CurrentTextSubLine++;
 		if (CurrentTextSubLine >= NUM_TEXT_SUBLINES + NUM_TEXT_BORDER_LINES)
 		{
@@ -892,21 +1017,8 @@ int IRAM_ATTR SetupLine(uint32_t Bank, const int *StartingLine)
 			CurrentTextLine++;
 		}
 	}
-	else if (UIState == kUIState_CalibrationMode || ShowPointer)
+	else
 	{
-		bool bPlayerVisibleOnLine[2];
-		bPlayerVisibleOnLine[0] = CurrentLine >= StartingLine[0] && CurrentLine < StartingLine[0] + ARRAY_NUM(ReticuleSizeLookup[0]);
-		bPlayerVisibleOnLine[1] = CurrentLine >= StartingLine[1] && CurrentLine < StartingLine[1] + ARRAY_NUM(ReticuleSizeLookup[0]);
-		for (int Player = 0; Player < 2; Player++)
-		{
-			if (bPlayerVisibleOnLine[Player])
-			{
-				if (ReticuleSizeLookup[Player][CurrentLine - StartingLine[Player]] < 4) // Pulses less than 4 cause issues
-				{
-					bPlayerVisibleOnLine[Player] = false;
-				}
-			}
-		}
 		if (LogoMode && NormalizedCurrentLine >= LOGO_START_LINE && NormalizedCurrentLine < LOGO_END_LINE)
 		{
 			int LineIdx = NormalizedCurrentLine - LOGO_START_LINE;
@@ -927,59 +1039,77 @@ int IRAM_ATTR SetupLine(uint32_t Bank, const int *StartingLine)
 			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[8].val = EndTerminator.val;
 			Active = 1;
 		}
-		else if (bPlayerVisibleOnLine[0] && bPlayerVisibleOnLine[1])
+		else if (UIState == kUIState_CalibrationMode || ShowPointer)
 		{
-			int XStart[2];
-			int XEnd[2];
-			XStart[0] = ReticuleXPosition[0] - ReticuleSizeLookup[0][CurrentLine - StartingLine[0]];
-			XStart[1] = ReticuleXPosition[1] - ReticuleSizeLookup[1][CurrentLine - StartingLine[1]];
-			XEnd[0] = XStart[0] + 2 * ReticuleSizeLookup[0][CurrentLine - StartingLine[0]];
-			XEnd[1] = XStart[1] + 2 * ReticuleSizeLookup[1][CurrentLine - StartingLine[1]];
-			int MinPlayer = (XStart[0] < XStart[1]) ? 0 : 1;
-			rmt_item32_t HorizontalPulse;
-			HorizontalPulse.level0 = 1;
-			HorizontalPulse.level1 = 0;
-			if (XStart[1-MinPlayer] <= XEnd[MinPlayer]) // Overlapping
+			bool bPlayerVisibleOnLine[2];
+			bPlayerVisibleOnLine[0] = CurrentLine >= StartingLine[0] && CurrentLine < StartingLine[0] + ARRAY_NUM(ReticuleSizeLookup[0]);
+			bPlayerVisibleOnLine[1] = CurrentLine >= StartingLine[1] && CurrentLine < StartingLine[1] + ARRAY_NUM(ReticuleSizeLookup[0]);
+			for (int Player = 0; Player < 2; Player++)
 			{
-				HorizontalPulse.duration0 = XStart[MinPlayer];
-				HorizontalPulse.duration1 = MAX(XEnd[1 - MinPlayer], XEnd[MinPlayer]) - XStart[MinPlayer];
+				if (bPlayerVisibleOnLine[Player])
+				{
+					if (ReticuleSizeLookup[Player][CurrentLine - StartingLine[Player]] < 4) // Pulses less than 4 cause issues
+					{
+						bPlayerVisibleOnLine[Player] = false;
+					}
+				}
+			}
+
+			if (bPlayerVisibleOnLine[0] && bPlayerVisibleOnLine[1])
+			{
+				int XStart[2];
+				int XEnd[2];
+				XStart[0] = ReticuleXPosition[0] - ReticuleSizeLookup[0][CurrentLine - StartingLine[0]];
+				XStart[1] = ReticuleXPosition[1] - ReticuleSizeLookup[1][CurrentLine - StartingLine[1]];
+				XEnd[0] = XStart[0] + 2 * ReticuleSizeLookup[0][CurrentLine - StartingLine[0]];
+				XEnd[1] = XStart[1] + 2 * ReticuleSizeLookup[1][CurrentLine - StartingLine[1]];
+				int MinPlayer = (XStart[0] < XStart[1]) ? 0 : 1;
+				rmt_item32_t HorizontalPulse;
+				HorizontalPulse.level0 = 1;
+				HorizontalPulse.level1 = 0;
+				if (XStart[1 - MinPlayer] <= XEnd[MinPlayer]) // Overlapping
+				{
+					HorizontalPulse.duration0 = XStart[MinPlayer];
+					HorizontalPulse.duration1 = MAX(XEnd[1 - MinPlayer], XEnd[MinPlayer]) - XStart[MinPlayer];
+					RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[0].val = HorizontalPulse.val;
+					RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[1].val = EndTerminator.val;
+				}
+				else // No overlap
+				{
+					HorizontalPulse.duration0 = XStart[MinPlayer];
+					HorizontalPulse.duration1 = XEnd[MinPlayer] - XStart[MinPlayer];
+					RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[0].val = HorizontalPulse.val;
+					HorizontalPulse.duration0 = XStart[1 - MinPlayer] - XEnd[MinPlayer];
+					HorizontalPulse.duration1 = XEnd[1 - MinPlayer] - XStart[1 - MinPlayer];
+					RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[1].val = HorizontalPulse.val;
+					RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[2].val = EndTerminator.val;
+				}
+				Active = 1;
+			}
+			else if (bPlayerVisibleOnLine[0] || bPlayerVisibleOnLine[1])
+			{
+				int CurrentPlayer = bPlayerVisibleOnLine[0] ? 0 : 1;
+				rmt_item32_t HorizontalPulse;
+				HorizontalPulse.level0 = 1;
+				HorizontalPulse.duration0 = ReticuleXPosition[CurrentPlayer] - ReticuleSizeLookup[CurrentPlayer][CurrentLine - StartingLine[CurrentPlayer]];
+				HorizontalPulse.level1 = 0;
+				HorizontalPulse.duration1 = 2 * ReticuleSizeLookup[CurrentPlayer][CurrentLine - StartingLine[CurrentPlayer]];
 				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[0].val = HorizontalPulse.val;
 				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[1].val = EndTerminator.val;
+				Active = 1;
 			}
-			else // No overlap
-			{
-				HorizontalPulse.duration0 = XStart[MinPlayer];
-				HorizontalPulse.duration1 = XEnd[MinPlayer] - XStart[MinPlayer];
-				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[0].val = HorizontalPulse.val;
-				HorizontalPulse.duration0 = XStart[1 - MinPlayer] - XEnd[MinPlayer];
-				HorizontalPulse.duration1 = XEnd[1 - MinPlayer] - XStart[1 - MinPlayer];
-				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[1].val = HorizontalPulse.val;
-				RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[2].val = EndTerminator.val;
-			}
-			Active = 1;
-		}
-		else if (bPlayerVisibleOnLine[0] || bPlayerVisibleOnLine[1])
-		{
-			int CurrentPlayer = bPlayerVisibleOnLine[0] ? 0 : 1;
-			rmt_item32_t HorizontalPulse;
-			HorizontalPulse.level0 = 1;
-			HorizontalPulse.duration0 = ReticuleXPosition[CurrentPlayer] - ReticuleSizeLookup[CurrentPlayer][CurrentLine - StartingLine[CurrentPlayer]];
-			HorizontalPulse.level1 = 0;
-			HorizontalPulse.duration1 = 2 * ReticuleSizeLookup[CurrentPlayer][CurrentLine - StartingLine[CurrentPlayer]];
-			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[0].val = HorizontalPulse.val;
-			RMTMEM.chan[RMT_SCREEN_DIM_CHANNEL + Bank].data32[1].val = EndTerminator.val;
-			Active = 1;
 		}
 	}
 
 	for (int Player=0; Player<2; Player++)
 	{
+		int OffsetCurrentLine = CurrentLine + LineDelay;
 		int SourcePlayer = Player;
 		if (Coop)
 		{
 			SourcePlayer = LastActivePlayer;
 		}
-		if (CurrentLine == StartingLine[SourcePlayer])
+		if (OffsetCurrentLine == StartingLine[SourcePlayer])
 		{
 			int Channel = RMT_TRIGGER_CHANNEL + Player;
 			int DelayChannel = RMT_DELAY_TRIGGER_CHANNEL + Player;
@@ -996,7 +1126,7 @@ int IRAM_ATTR SetupLine(uint32_t Bank, const int *StartingLine)
 			RMTMEM.chan[DelayChannel].data32[1].val = EndTerminator.val;
 			Active |= (2 << Player);
 		}
-		else if (CurrentLine > StartingLine[SourcePlayer] && CurrentLine < StartingLine[SourcePlayer] + ARRAY_NUM(ReticuleSizeLookup[0]))
+		else if (OffsetCurrentLine > StartingLine[SourcePlayer] && OffsetCurrentLine < StartingLine[SourcePlayer] + ARRAY_NUM(ReticuleSizeLookup[0]))
 		{
 			Active |= (2 << Player);
 		}
@@ -1017,8 +1147,15 @@ void IRAM_ATTR DoOutputSelection(uint32_t Bank, bool bInMenu)
 	}
 	else
 	{
-		uint32_t HighChannel = (CursorBrightness&2) ? (RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL + Bank) : SIG_GPIO_OUT_IDX;
-		uint32_t LowChannel = (CursorBrightness&1) ? (RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL + Bank) : SIG_GPIO_OUT_IDX;
+		int LocalBrightness = CursorBrightness;
+#if !ENABLE_MENU_BORDER
+		if (UIState != kUIState_Playing)
+		{
+			LocalBrightness = (CurrentLine & 1) ? 2 : 3;
+		}
+#endif
+		uint32_t HighChannel = (LocalBrightness&2) ? (RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL + Bank) : SIG_GPIO_OUT_IDX;
+		uint32_t LowChannel = (LocalBrightness&1) ? (RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL + Bank) : SIG_GPIO_OUT_IDX;
 		WRITE_PERI_REG(OUT_SCREEN_DIM_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (HighChannel << GPIO_FUNC0_OUT_SEL_S));
 		WRITE_PERI_REG(OUT_SCREEN_DIMER_SELECTION_REG, GPIO_FUNC0_OUT_INV_SEL | (LowChannel << GPIO_FUNC0_OUT_SEL_S));
 		WRITE_PERI_REG(OUT_SCREEN_DIM_INV_SELECTION_REG, (RMT_SIG_OUT0_IDX + RMT_SCREEN_DIM_CHANNEL + Bank) << GPIO_FUNC0_OUT_SEL_S);
@@ -1050,6 +1187,16 @@ void IRAM_ATTR SpotGeneratorInnerLoop()
 		TIMERG1.hw_timer[timer_idx].update = 1;
 		// Don't really need the 64-bit time but only reading cnt_low seems to caused it to sometimes not update. Adding some nops also worked but not as reliably as this
 		uint64_t Time = 2*(((uint64_t)TIMERG1.hw_timer[timer_idx].cnt_high<<32) | TIMERG1.hw_timer[timer_idx].cnt_low); // Timer's clk is half APB hence 2x.
+		uint64_t CheckTime = 0;
+		while (Time < TIMING_VSYNC_THRESHOLD && CheckTime < Time + TIMING_SYNC_DEBOUNCE) // Try to debounce in case the sync signal is noisy
+		{
+			TIMERG1.hw_timer[timer_idx].update = 1;
+			CheckTime = 2 * (((uint64_t)TIMERG1.hw_timer[timer_idx].cnt_high << 32) | TIMERG1.hw_timer[timer_idx].cnt_low); // Timer's clk is half APB hence 2x.
+			if ((GPIO.in & BIT(IN_COMPOSITE_SYNC)) != 0)
+			{
+				Time = CheckTime;
+			}
+		}
 		if (bNeedSetup)
 		{
 			Active = SetupLine(Bank, CachedStartingLines);
@@ -1057,11 +1204,16 @@ void IRAM_ATTR SpotGeneratorInnerLoop()
 		}
 		while ((GPIO.in & BIT(IN_COMPOSITE_SYNC)) == 0); // while not sync
 		TIMERG1.hw_timer[timer_idx].reload = 1;
-		if (Time > TIMING_VSYNC_THRESHOLD || Time < TIMING_SHORT_SYNC_THRESHOLD)
+		if ((Time > TIMING_VSYNC_THRESHOLD) || (CurrentLine == 0 && Time < TIMING_SHORT_SYNC_THRESHOLD)) // TODO: Short syncs cause issues with noisy sync signals but removing it causes strange restart loops
 		{
 			if (CurrentLine > 200 && CurrentLine < 400)
 			{
 				bNTSC = (CurrentLine < 275); // PAL should be something like 300 and NTSC 250
+			}
+			
+			if (IOType == 4) // Serial
+			{
+				GPIO.out_w1ts = (1 << OUT_PLAYER1_TRIGGER1_PULLED) | (1 << OUT_PLAYER2_TRIGGER1_PULLED);
 			}
 
 			CurrentLine = 0;
@@ -1076,19 +1228,27 @@ void IRAM_ATTR SpotGeneratorInnerLoop()
 		{
 			CompositeSyncPositiveEdge(Bank, Active);
 			bNeedSetup = true;
+			
+			if (IOType == 4) // Serial
+			{
+				GPIO.out_w1tc = (1 << OUT_PLAYER1_TRIGGER1_PULLED) | (1 << OUT_PLAYER2_TRIGGER1_PULLED);
+			}
 		}
 	}
 }
 
-void SetReticuleSize()
+void SetReticuleSize(bool IsCalibration)
 {
 	float Scale = 1.0f;
-	switch (CursorSize)
+	if (!IsCalibration)
 	{
-		case 0: Scale = 1.00f; break; // Off (Will be shown during calibration)
-		case 1: Scale = 0.25f; break; // Small
-		case 2: Scale = 0.50f; break; // Medium
-		case 3: Scale = 1.00f; break; // Large
+		switch (CursorSize)
+		{
+			case 0: Scale = 1.00f; break; // Off (Will be shown during calibration)
+			case 1: Scale = 0.25f; break; // Small
+			case 2: Scale = 0.50f; break; // Medium
+			case 3: Scale = 1.00f; break; // Large
+		}
 	}
 	int ReticuleNumLines = ARRAY_NUM(ReticuleSizeLookup[0]);
 	float ReticuleHalfSize = Scale * ReticuleNumLines / 2.0f;
@@ -1218,6 +1378,11 @@ void InitializeMiscGPIO()
 	gpio_config(&GPIOConfig);
 	gpio_set_level(OUT_PLAYER2_LED_DELAYED, 0);
 	
+	GPIOConfig.pin_bit_mask = BIT(OUT_PLAYER1_SUSTAIN_CAPACITOR);
+	GPIOConfig.mode = GPIO_MODE_INPUT;	// Don't add extra sustain
+	gpio_config(&GPIOConfig);
+	gpio_set_level(OUT_PLAYER1_SUSTAIN_CAPACITOR, 0);
+	
 	GPIOConfig.pin_bit_mask = BIT(OUT_WHITE_OVERRIDE);
 	GPIOConfig.mode = GPIO_MODE_INPUT;	// Let white level detect from signal
 	gpio_config(&GPIOConfig);
@@ -1272,6 +1437,16 @@ void DrawNumber(int Value, int Row, int Column)
 	TextBuffer[Row][Column + 2] = Ones;
 }
 
+void DrawWholeNumber(int Value, int Row, int Column)
+{
+	int Tens = Value / 10;
+	int Ones = Value - Tens * 10;
+	if (Tens != 0)
+		TextBuffer[Row][Column++] = Tens;
+	TextBuffer[Row][Column++] = Ones;
+	TextBuffer[Row][Column++] = FontRemap[' '];
+}
+
 void UpdateMenu()
 {
 	int Tab = 14;
@@ -1282,25 +1457,25 @@ void UpdateMenu()
 		case 2: ConvertText("MEDIUM", 2, Tab); break;
 		case 3: ConvertText("LARGE ", 2, Tab); break;
 	}
-	if (Coop)
-		ConvertText("CO OP ", 3, Tab);
-	else
-		ConvertText("VERSUS", 3, Tab);
-	DrawNumber(DelayDecimal, 4, Tab);
-	if (WhiteLevelDecimal)
-	{
-		DrawNumber(WhiteLevelDecimal, 5, Tab);
-		TextBuffer[5][Tab + 3] = FontRemap['V'];
-	}
-	else
-	{
-		ConvertText("OFF ", 5, Tab);
-	}
 	switch (CursorBrightness)
 	{
-		case 1: ConvertText("DARK  ", 6, Tab); break;
-		case 2: ConvertText("MEDIUM", 6, Tab); break;
-		case 3: ConvertText("BRIGHT", 6, Tab); break;
+		case 1: ConvertText("DARK  ", 3, Tab); break;
+		case 2: ConvertText("MEDIUM", 3, Tab); break;
+		case 3: ConvertText("BRIGHT", 3, Tab); break;
+	}
+	if (Coop)
+		ConvertText("CO OP ", 4, Tab);
+	else
+		ConvertText("VERSUS", 4, Tab);
+	DrawNumber(DelayDecimal, 5, Tab);
+	if (WhiteLevelDecimal)
+	{
+		DrawNumber(WhiteLevelDecimal, 6, Tab);
+		TextBuffer[6][Tab + 3] = FontRemap['V'];
+	}
+	else
+	{
+		ConvertText("OFF ", 6, Tab);
 	}
 	switch (IOType)
 	{
@@ -1310,6 +1485,7 @@ void UpdateMenu()
 		case 3: ConvertText("INV BA", 7, Tab); break;
 		case 4: ConvertText("SERIAL", 7, Tab); break;
 	}
+	DrawWholeNumber(LineDelay, 8, Tab);
 	for (int i=2; i<=9; i++)
 	{
 		TextBuffer[i][0] = FontRemap[(unsigned char)((i == SelectedRow) ? '+' : ' ')];
@@ -1362,25 +1538,31 @@ bool MenuInput(MenuControl Input, PlayerInput *MenuPlayer)
 	if (Input != kMenu_None)
 	{
 		bool bDirty = AdjustRange(Input, kMenu_Up, kMenu_Down, SelectedRow, 2, 9);
+		bool bMovementDirty = bDirty;
 		switch (SelectedRow)
 		{
 			case 2: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, CursorSize, 0, 3); break;
-			case 3: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, Coop, 0, 1); break;
-			case 4: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, DelayDecimal, 0, 99); break;
-			case 5: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, WhiteLevelDecimal, 0, 33); break;
-			case 6: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, CursorBrightness, 1, 3); break;
+			case 3: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, CursorBrightness, 1, 3); break;
+			case 4: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, Coop, 0, 1); break;
+			case 5: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, DelayDecimal, 0, 99); break;
+			case 6: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, WhiteLevelDecimal, 0, 33); break;
 			case 7: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, IOType, 0, 4); break;
+			case 8: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, LineDelay, 0, 15); break;
 		}
 		if (Input == kMenu_Select)
 		{
 			switch (SelectedRow)
 			{
-				case 8: bDirty |= true; MenuPlayer->StartCalibration(); break;
-				case 9: bDirty |= true; MenuPlayer->ResetCalibration(); break;
+				case 9: MenuPlayer->StartCalibration(); break;
 			}
 		}
 		if (bDirty)
 		{
+			if (SelectedRow >= 5 && SelectedRow <= 8 && !bMovementDirty) // Changing delay/white level/IOType/line delay
+			{
+				CableType = 0; // Custom
+				gpio_set_direction(OUT_PLAYER1_SUSTAIN_CAPACITOR, GPIO_MODE_INPUT); // Remove sustain
+			}
 			UpdateMenu();
 		}
 		return bDirty;
@@ -1393,13 +1575,13 @@ void InitializeMenu()
 	ConvertText("   CONFIGURE MENU   ", 0, 0);
 	ConvertText("                    ", 1, 0);
 	ConvertText("+CURSOR SIZE: LARGE ", 2, 0);
-	ConvertText(" 2 PLAYER:    VERSUS", 3, 0);
-	ConvertText(" DELAY:       0.0us ", 4, 0);
-	ConvertText(" WHITE LEVEL: 1.3V  ", 5, 0);
-	ConvertText(" CURSOR COLOR:BRIGHT", 6, 0);
+	ConvertText(" CURSOR COLOR:BRIGHT", 3, 0);
+	ConvertText(" 2 PLAYER:    VERSUS", 4, 0);
+	ConvertText(" DELAY:       0.0us ", 5, 0);
+	ConvertText(" WHITE LEVEL: 1.3V  ", 6, 0);
 	ConvertText(" IO TYPE:     NORMAL", 7, 0);
-	ConvertText(" START CALIBRATION  ", 8, 0);
-	ConvertText(" RESET CALIBRATION  ", 9, 0);
+	ConvertText(" LINE DELAY:  0     ", 8, 0);
+	ConvertText(" START CALIBRATION  ", 9, 0);
 	UpdateMenu();
 	SetMenuState();
 }
@@ -1416,6 +1598,20 @@ void InitializeFirmwareUpdateScreen()
 	ConvertText("                    ", 7, 0);
 	ConvertText("      WEB PAGE:     ", 8, 0);
 	ConvertText("     192.168.4.1    ", 9, 0);
+}
+
+void InitializeChooseCable()
+{
+	ConvertText("                    ", 0, 0);
+	ConvertText("                    ", 1, 0);
+	ConvertText("                    ", 2, 0);
+	ConvertText("    SELECT CABLE    ", 3, 0);
+	ConvertText(CableSettings[CableType].Name, 4, 0);
+	ConvertText("                    ", 5, 0);
+	ConvertText(" USE DPAD TO SELECT ", 6, 0);
+	ConvertText(" PRESS A TO CONFIRM ", 7, 0);
+	ConvertText("                    ", 8, 0);
+	ConvertText("                    ", 9, 0);
 }
 
 static EventGroupHandle_t wifi_event_group;
@@ -1672,7 +1868,7 @@ extern "C" void app_main(void)
 	PWMPeripherialInit();
 	SetDefaultMenuState();
 	RestoreMenuState();
-	InitializeMenu();
+	InitializeChooseCable();
 
 	xTaskCreatePinnedToCore(&WiimoteTask, "WiimoteTask", 8192, NULL, 5, NULL, 0);
 
