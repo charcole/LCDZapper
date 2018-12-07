@@ -89,9 +89,8 @@ extern "C"
 #define TIMING_BLANKED_LINES 28		// Should be about 16?
 #define TIMING_VISIBLE_LINES 258	// Should be 288
 #define TIMING_VISIBLE_LINES_NTSC 206	// Should be 240
-#define TIMING_VSYNC_THRESHOLD (80*16) // If sync is longer than this then doing a vertical sync
-#define TIMING_SHORT_SYNC_THRESHOLD (80*2 + 40) // If sync is shorter than this it's a short sync
-#define TIMING_SHORT_SYNC_LOWER_THRESHOLD (80*1 + 40) // If sync is longer than this it's a short sync
+#define TIMING_VSYNC_THRESHOLD (40*16) // If sync is longer than this then doing a vertical sync
+#define TIMING_SHORT_SYNC_THRESHOLD (40*3) // If sync is shorter than this it's a short sync
 #define TIMING_SYNC_DEBOUNCE (2*80)  // At the end of the sync check to see if it's real (noisy signals can cause errors)
 #define TEXT_START_LINE 105
 #define TEXT_END_LINE (TEXT_START_LINE + 80)
@@ -1205,7 +1204,7 @@ void IRAM_ATTR SpotGeneratorInnerLoop()
 		}
 		while ((GPIO.in & BIT(IN_COMPOSITE_SYNC)) == 0); // while not sync
 		TIMERG1.hw_timer[timer_idx].reload = 1;
-		if ((Time > TIMING_VSYNC_THRESHOLD))// || (Time > TIMING_SHORT_SYNC_LOWER_THRESHOLD && Time < TIMING_SHORT_SYNC_THRESHOLD)) // Short syncs cause issues with noisy sync signals
+		if ((Time > TIMING_VSYNC_THRESHOLD) || (CurrentLine == 0 && Time < TIMING_SHORT_SYNC_THRESHOLD)) // TODO: Short syncs cause issues with noisy sync signals but removing it causes strange restart loops
 		{
 			if (CurrentLine > 200 && CurrentLine < 400)
 			{
