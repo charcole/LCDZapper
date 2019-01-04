@@ -13,6 +13,8 @@
 //     NonCommercial — You may not use the material for commercial purposes.
 //     Attribution — You must give appropriate credit, provide a link to the license, and indicate if changes were made. You may do so in any reasonable manner, but not in any way that suggests the licensor endorses you or your use.
 
+// Note to self: When updating releases update webpage and logo image
+
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -155,6 +157,7 @@ CableSetting CableSettings[]=
 	{ "     +NES           ", 35, 0, 13, 3 },
 	{ "     +SMS           ", 35, 0, 0, 1 },
 	{ "     +SATURN        ", 51, 0, 0, 0 },
+	{ "     +GUNCON 2      ", 15, 8, 11, 5 },
 };
 
 EUIState UIState = kUIState_Syncing;
@@ -566,7 +569,7 @@ void RestoreMenuState()
 			CustomLineDelay = LineDelay = (State & 15); State >>= 4;
 			LoadedCableType = CableType = (State & 15); State >>= 4;
 
-			if (State != SAVESTATE_VERSION || IOType > 4 || CursorBrightness > 3 || WhiteLevelDecimal > 33 || DelayDecimal > 99 || CursorSize > 3 || CableType >= ARRAY_NUM(CableSettings))
+			if (State != SAVESTATE_VERSION || IOType > 5 || CursorBrightness > 3 || WhiteLevelDecimal > 33 || DelayDecimal > 99 || CursorSize > 3 || CableType >= ARRAY_NUM(CableSettings))
 			{
 				printf("Menu state seems corrupt: Version=%d Data=%d/%d/%d/%d/%d/%d\n", State, IOType, CursorBrightness, WhiteLevelDecimal, DelayDecimal, CursorSize, Coop);
 				SetDefaultMenuState();
@@ -668,7 +671,7 @@ void WiimoteTask(void *pvParameters)
 		WasPlayer1Button = Player1Buttons;
 		WasPlayer2Button = Player2Buttons;
 
-		if (IOType != 4)
+		if (IOType < 4)
 		{
 			bool bInvert = ((IOType & 2) != 0);
 			gpio_matrix_out(OUT_PLAYER1_TRIGGER1_PULLED, SIG_GPIO_OUT_IDX, bInvert, false);
@@ -691,7 +694,44 @@ void WiimoteTask(void *pvParameters)
 				gpio_set_level(OUT_PLAYER2_TRIGGER2_PULLED, Player2BButton);
 			}
 		}
-		else
+		else if (IOType == 5) // GunCon 2
+		{
+			if (UART1.status.txfifo_cnt == 0 && UART2.status.txfifo_cnt == 0)
+			{
+				for (int i = 0; i < 2; i++)
+				{
+					uint8_t ToTransmit[8];
+					PlayerInput *Player = i ? &Player2 : &Player1;
+					uint16_t SpotX = (ReticuleXPosition[i] + (40 + DelayDecimal) * 8) * 12 / 80; // GunCon 2 uses 12MHz clock from start of sync
+					uint16_t SpotY = ReticuleStartLineNum[i]; // GunCon 2 uses line numbers
+					uint16_t Buttons = Player->GetButtons();
+					if (SpotY >= 1000)
+					{
+						SpotX = SpotY = ~0;
+					}
+					else
+					{
+						SpotY += LineDelay - 8;
+					}
+					ToTransmit[0] = 0x80;
+					ToTransmit[1] = 0xCC; // GunCon 2 identifier
+					ToTransmit[2] = (SpotX >> 7) & 0x7F;
+					ToTransmit[3] = (SpotX & 0x7F);
+					ToTransmit[4] = (SpotY >> 7) & 0x7F;
+					ToTransmit[5] = (SpotY & 0x7F);
+					ToTransmit[6] = (Buttons >> 7) & 0x7F;
+					ToTransmit[7] = (Buttons & 0x7F);
+				
+					uart_tx_chars((uart_port_t)(UART_NUM_1 + i), (char*)ToTransmit, sizeof(ToTransmit));
+				}
+
+				gpio_matrix_out(OUT_PLAYER1_TRIGGER1_PULLED, SIG_GPIO_OUT_IDX, true, false);
+				gpio_matrix_out(OUT_PLAYER1_TRIGGER2_PULLED, U1TXD_OUT_IDX, true, false);
+				gpio_matrix_out(OUT_PLAYER2_TRIGGER1_PULLED, SIG_GPIO_OUT_IDX, true, false);
+				gpio_matrix_out(OUT_PLAYER2_TRIGGER2_PULLED, U2TXD_OUT_IDX, true, false);
+			}
+		}
+		else // Serial
 		{
 			if (UART1.status.txfifo_cnt == 0) // UART FIFO is zero
 			{
@@ -1211,7 +1251,7 @@ void IRAM_ATTR SpotGeneratorInnerLoop()
 				bNTSC = (CurrentLine < 275); // PAL should be something like 300 and NTSC 250
 			}
 			
-			if (IOType == 4) // Serial
+			if (IOType >= 4) // Serial
 			{
 				GPIO.out_w1ts = (1 << OUT_PLAYER1_TRIGGER1_PULLED) | (1 << OUT_PLAYER2_TRIGGER1_PULLED);
 			}
@@ -1229,7 +1269,7 @@ void IRAM_ATTR SpotGeneratorInnerLoop()
 			CompositeSyncPositiveEdge(Bank, Active);
 			bNeedSetup = true;
 			
-			if (IOType == 4) // Serial
+			if (IOType >= 4) // Serial
 			{
 				GPIO.out_w1tc = (1 << OUT_PLAYER1_TRIGGER1_PULLED) | (1 << OUT_PLAYER2_TRIGGER1_PULLED);
 			}
@@ -1416,6 +1456,9 @@ void InitializeMiscGPIO()
     };
     uart_param_config(UART_NUM_1, &UARTConfig);
     uart_driver_install(UART_NUM_1, UART_FIFO_LEN * 2, 0, 0, NULL, 0);
+    
+	uart_param_config(UART_NUM_2, &UARTConfig);
+    uart_driver_install(UART_NUM_2, UART_FIFO_LEN * 2, 0, 0, NULL, 0);
 }
 
 void ConvertText(const char *Text, int Row, int Column)
@@ -1484,6 +1527,7 @@ void UpdateMenu()
 		case 2: ConvertText("INV AB", 7, Tab); break;
 		case 3: ConvertText("INV BA", 7, Tab); break;
 		case 4: ConvertText("SERIAL", 7, Tab); break;
+		case 5: ConvertText("GUNCON", 7, Tab); break;
 	}
 	DrawWholeNumber(LineDelay, 8, Tab);
 	for (int i=2; i<=9; i++)
@@ -1546,7 +1590,7 @@ bool MenuInput(MenuControl Input, PlayerInput *MenuPlayer)
 			case 4: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, Coop, 0, 1); break;
 			case 5: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, DelayDecimal, 0, 99); break;
 			case 6: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, WhiteLevelDecimal, 0, 33); break;
-			case 7: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, IOType, 0, 4); break;
+			case 7: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, IOType, 0, 5); break;
 			case 8: bDirty |= AdjustRange(Input, kMenu_Left, kMenu_Right, LineDelay, 0, 15); break;
 		}
 		if (Input == kMenu_Select)
@@ -1806,7 +1850,7 @@ void WifiStartListening()
 				else
 				{
 					printf("Sending response\n");
-					const char* GoodResponse = "HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n<!doctype html><title>LightGunVerter Firmware Update</title><style>*{box-sizing: border-box;}body{margin: 0;}#main{display: flex; min-height: calc(100vh - 40vh);}#main > article{flex: 1;}#main > nav, #main > aside{flex: 0 0 20vw;}#main > nav{order: -1;}header, footer, article, nav, aside{padding: 1em;}header, footer{height: 20vh;}</style><body> <header> <center><h1>LightGunVerter Firmware Update</h1></center> </header> <div id=\"main\"> <nav></nav> <article> <p> Upload new .bin file: <form id=\"uploadbanner\" enctype=\"multipart/form-data\" method=\"post\" action=\"#\"> <input id=\"fileupload\" name=\"myfile\" type=\"file\"/> <input type=\"submit\" value=\"Update\" id=\"submit\"/> </form> </p><p> <b>Do not remove power while updating</b> </p></article> <aside></aside> </div></body>";
+					const char* GoodResponse = "HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n<!doctype html><title>LightGunVerter Firmware Update</title><style>*{box-sizing: border-box;}body{margin: 0;}#main{display: flex; min-height: calc(100vh - 40vh);}#main > article{flex: 1;}#main > nav, #main > aside{flex: 0 0 20vw;}#main > nav{order: -1;}header, footer, article, nav, aside{padding: 1em;}header, footer{height: 20vh;}</style><body> <header> <center><h1>LightGunVerter Firmware Update</h1></center> </header> <div id=\"main\"> <nav></nav> <article> <p> Current firmware version 1.1 (2019/1/4) </p> <p> Upload new .bin file: <form id=\"uploadbanner\" enctype=\"multipart/form-data\" method=\"post\" action=\"#\"> <input id=\"fileupload\" name=\"myfile\" type=\"file\"/> <input type=\"submit\" value=\"Update\" id=\"submit\"/> </form> </p><p> <b>Do not remove power while updating</b> </p></article> <aside></aside> </div></body>";
 					const char* BadResponse = "HTTP/1.0 404 NOT FOUND\r\nContent-Type: text/html\r\n\r\n<!doctype html><title>Not Found</title><body>Page not found :(</body>";
 					const char* Response = bReturnIndex ? GoodResponse : BadResponse;
 
